@@ -14,7 +14,9 @@ class UpgradeAvailabilityTest(RedpandaTest):
 
     def __init__(self, test_context):
         super(UpgradeAvailabilityTest,
-              self).__init__(test_context=test_context, num_brokers=8)
+              self).__init__(test_context=test_context,
+                             num_brokers=8,
+                             legacy_config_mode=True)
 
         self.consumer = None
         self.producer = None
