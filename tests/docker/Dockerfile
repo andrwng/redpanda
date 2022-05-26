@@ -168,4 +168,8 @@ RUN mkdir -p /opt/scripts && \
     curl https://raw.githubusercontent.com/redpanda-data/seastar/2a9504b3238cba4150be59353bf8d0b3a01fe39c/scripts/seastar-addr2line -o /opt/scripts/seastar-addr2line && \
     chmod +x /opt/scripts/seastar-addr2line
 
+#mkdir -p "/opt/kafka-2.7.0" && chmod a+rw /opt/kafka-2.7.0 && curl -s "$KAFKA_MIRROR/2.7.0/kafka_2.12-2.7.0.tgz" | tar xz --strip-components=1 -C "/opt/kafka-2.7.0"
+ENV MY_MIRROR="https://archive.apache.org/dist/kafka"
+RUN mkdir -p "/opt/kafka-2.8.0" && chmod a+rw /opt/kafka-2.8.0 && curl -s "$MY_MIRROR/2.8.0/kafka_2.12-2.8.0.tgz" | tar xz --strip-components=1 -C "/opt/kafka-2.8.0"
+
 CMD service ssh start && tail -f /dev/null
