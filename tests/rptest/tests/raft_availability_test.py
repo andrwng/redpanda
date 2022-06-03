@@ -55,6 +55,7 @@ class RaftAvailabilityTest(RedpandaTest):
                 # Disable leader balancer to enable testing
                 # leadership stability.
                 "enable_leader_balancer": False,
+                "log_segment_size": 1048576,
                 "id_allocator_replication": 3
             },
             **kwargs)
@@ -66,6 +67,11 @@ class RaftAvailabilityTest(RedpandaTest):
         return KafkaCat(self.redpanda).get_partition_leader(self.topic, 0)
 
     def _wait_for_leader(self, condition=None, timeout=None):
+        """
+        Waits for a leader that satisfies the given condition within the given
+        timeout.
+        :returns: leader id
+        """
         if timeout is None:
             timeout = ELECTION_TIMEOUT
 
