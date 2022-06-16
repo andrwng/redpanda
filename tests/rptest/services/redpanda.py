@@ -95,6 +95,9 @@ CHAOS_LOG_ALLOW_LIST = [
     re.compile(
         "cluster - .*exception while executing partition operation:.*std::exception \(std::exception\)"
     ),
+    re.compile(
+        "cluster - .*seastar::abort_requested_exception.*"
+    ),
 ]
 
 

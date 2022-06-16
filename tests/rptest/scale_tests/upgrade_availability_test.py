@@ -16,6 +16,13 @@ import threading
 # TODO: make RaftAvailabilityTest a mixin
 class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
     topics = (TopicSpec(partition_count=1, replication_factor=3), )
+    class RestartTarget(Enum):
+        LEADER = 1
+        MOVE_DEST = 2
+
+    class MoveTarget(Enum):
+        LEADER = 1
+        FOLLOWER = 2
 
     def __init__(self, test_context):
         super(UpgradeAvailabilityTest, self).__init__(test_ctx=test_context,
@@ -33,12 +40,11 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
     def setUp(self):
 
         # Condition for local development
-        if not self.redpanda.dedicated_nodes:
-            # Make sure each RP node has the list of updated
-            # redanda packages
-            for node in self.redpanda.nodes:
-                cmd = "curl -1sLf 'https://packages.vectorized.io/nzc4ZYQK3WRGd9sy/redpanda/cfg/setup/bash.deb.sh' | sudo -E bash"
-                node.account.ssh(cmd, allow_fail=False)
+        # Make sure each RP node has the list of updated
+        # redanda packages
+        for node in self.redpanda.nodes:
+            cmd = "curl -1sLf 'https://packages.vectorized.io/nzc4ZYQK3WRGd9sy/redpanda/cfg/setup/bash.deb.sh' | sudo -E bash"
+            node.account.ssh(cmd, allow_fail=False)
 
         # Use 21.11.15 at startup
         cmd = 'sudo apt -o  Dpkg::Options::="--force-confnew" install -y --allow-downgrades redpanda=21.11.15-1-7325762b'
@@ -88,8 +94,8 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
         brokers = self.admin.get_brokers()
 
         # Wait for some load
-        wait_until(lambda: self.producer.record_count > 50000,
-                   timeout_sec=60,
+        wait_until(lambda: self.producer.record_count > 200000,
+                   timeout_sec=180,
                    err_msg='Failed to write enough data')
 
         nodes_not_in_replica_set = [
@@ -107,6 +113,7 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
             replicas_status = []
 
             for host in hosts:
+                self.logger.info(f'Movement status check: {host} {target_status}')
                 res = self.admin._get_configuration(host,
                                                     namespace='kafka',
                                                     topic=self.topic,
@@ -116,9 +123,10 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
                     return False
                 else:
                     status = res['status']
-                    self.logger.debug(f'Movement status: {status}')
+                    self.logger.info(f'Movement status: {status}')
                     replicas_status.append(status == target_status)
 
+            self.logger.info(f'Movement status check: {target_status} {all(replicas_status)}')
             return all(replicas_status)
 
         wait_until(check_status_on_all_replicas, timeout_sec=timeout_s)
@@ -130,6 +138,7 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
         extra_rp_conf = {
             "enable_leader_balancer": False,
             "id_allocator_replication": 3,
+            "log_segment_size": 1048576,
 
             # raft_recovery_default_read_size is available on 22.1.1 and newer
             "raft_recovery_default_read_size": raft_recovery_default_read_size,
@@ -169,30 +178,8 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
     def run_partition_movement_for_n_seconds(self,
                                              hosts: list[str],
                                              timeout_s: int = 10):
-        def check_for_done_status_on_replicas():
-            replicas_status = []
-
-            for host in hosts:
-                res = self.admin._get_configuration(host,
-                                                    namespace='kafka',
-                                                    topic=self.topic,
-                                                    partition=0)
-
-                if 'status' in res:
-                    status = res['status']
-                    replicas_status.append(status == 'done')
-
-            if any(replicas_status):
-                raise Exception('partition movement finished on a replica')
-
-            return False
-
-        try:
-            wait_until(check_for_done_status_on_replicas,
-                       timeout_sec=timeout_s)
-        except TimeoutError as ex:
-            # Ignore the timeout. We want that to happen
-            pass
+        time.sleep(timeout_s)
+        self.confirm_partition_movement_status(hosts, "in_progress")
 
     @cluster(num_nodes=5, log_allow_list=CHAOS_LOG_ALLOW_LIST)
     def test_node_will_not_be_in_replica_set(self):
@@ -205,7 +192,7 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
         # the replica set.
         node_x = choice(nodes_in_replica_set)
         node_y = choice(nodes_not_in_replica_set)
-        print(f'Move partition from {node_x} to {node_y}')
+        self.logger.info(f'Move partition from {node_x} to {node_y}')
         part_movement_th = threading.Thread(
             target=self.move_from_src_to_dest,
             args=(node_x, node_y),
@@ -217,7 +204,7 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
                                                'in_progress')
 
         self.run_partition_movement_for_n_seconds(self.rp_hostnames,
-                                                  timeout_s=10)
+                                                  timeout_s=1)
 
         # After node restart, probably within the below function,
         # again check that parttion movement started/is on-going
@@ -235,7 +222,7 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
         # node X.
         node_x = choice(nodes_not_in_replica_set)
         node_y = choice(nodes_in_replica_set)
-        print(f'Move partition from {node_y} to {node_x}')
+        self.logger.info(f'Move partition from {node_y} to {node_x}')
         part_movement_th = threading.Thread(
             target=self.move_from_src_to_dest,
             args=(node_y, node_x),
@@ -245,9 +232,10 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
         # Check that partition movement started/is on-going
         self.confirm_partition_movement_status(self.rp_hostnames,
                                                'in_progress')
+        self.logger.info("AWONG finished waiting for in progress")
 
         self.run_partition_movement_for_n_seconds(self.rp_hostnames,
-                                                  timeout_s=10)
+                                                  timeout_s=1)
 
         self.restart_node_and_wait_partition_movement(node_id=node_x)
         part_movement_th.join()
@@ -272,7 +260,7 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
 
         wait_until(select_node, timeout_sec=10)
 
-        print(f'Move partition from {node_z} to {node_y}')
+        self.logger.info(f'Move partition from {node_z} to {node_y}')
         part_movement_th = threading.Thread(
             target=self.move_from_src_to_dest,
             args=(node_z, node_y),
@@ -282,12 +270,81 @@ class UpgradeAvailabilityTest(PartitionMovementMixin, RaftAvailabilityTest):
         # Check that partition movement started/is on-going
         self.confirm_partition_movement_status(self.rp_hostnames,
                                                'in_progress')
+        self.logger.info("AWONG finished waiting for in progress")
 
         self.run_partition_movement_for_n_seconds(self.rp_hostnames,
-                                                  timeout_s=10)
+                                                  timeout_s=1)
 
         # We could skip the partition movement and just upgrade node_x,
         # however, the point of this test is to check what happens when
         # we upgrade a node while partition movement run concurrently.
         self.restart_node_and_wait_partition_movement(node_id=node_x)
         part_movement_th.join()
+
+    def move_and_upgrade(self, restart_target, move_target):
+        admin = Admin(self.redpanda)
+
+        # Start workload
+        self.start_workload(runtime=180)
+
+        leader_id = self._wait_for_leader()[0]
+        orig_assignments = self._get_assignments(admin, self.topic, 0)
+        orig_node_ids = [a["node_id"] for a in orig_assignments]
+        brokers = admin.get_brokers()
+
+        # Wait for there to be substantial load.
+        wait_until(lambda: self.producer.record_count > 200000,
+                   timeout_sec=180,
+                   err_msg='Failed to write enough data')
+
+        empty_node_ids = [b["node_id"] for b in brokers if b["node_id"] not in orig_node_ids]
+
+        src_node_id = -1
+        if move_target == self.MoveTarget.LEADER:
+            src_node_id = leader_id
+        elif move_target == self.MoveTarget.FOLLOWER:
+            src_node_id = leader_id
+            while src_node_id == leader_id:
+                src_node_id = choice(orig_node_ids)
+
+        dst_node_id = empty_node_ids[0]
+        self.logger.info(f"Moving replica from node {src_node_id} to {dst_node_id}")
+        assignments = self._move_replica(self.topic, 0, src_node_id, dst_node_id)
+
+        # Upgrade the leader node to 22.1.3
+        node_id_to_upgrade = None
+        if restart_target == self.RestartTarget.LEADER:
+            node_id_to_upgrade = leader_id
+        elif restart_target == self.RestartTarget.MOVE_DEST:
+            node_id_to_upgrade = dst_node_id
+
+        self.confirm_partition_movement_status(self.rp_hostnames,
+                                               'in_progress')
+        self.logger.info(f"Restarting node {node_id_to_upgrade}")
+        node_to_upgrade = self.redpanda.get_node(node_id_to_upgrade)
+        self.restart_node_w_version(node_to_upgrade, '22.1.3-1')
+        self.confirm_partition_movement_status(self.rp_hostnames,
+                                               'in_progress')
+
+        self.admin.wait_stable_configuration(topic=self.topic,
+                                             namespace='kafka',
+                                             replication=3,
+                                             timeout_s=120)
+
+        self.producer.wait(timeout_sec=1200)
+
+    @cluster(num_nodes=5, log_allow_list=CHAOS_LOG_ALLOW_LIST)
+    def test_upgrade_leader_move_leader(self):
+        self.move_and_upgrade(self.RestartTarget.LEADER, self.MoveTarget.LEADER)
+
+    @cluster(num_nodes=5, log_allow_list=CHAOS_LOG_ALLOW_LIST)
+    def test_upgrade_leader_move_follower(self):
+        self.move_and_upgrade(self.RestartTarget.LEADER, self.MoveTarget.FOLLOWER)
+
+    @cluster(num_nodes=5, log_allow_list=CHAOS_LOG_ALLOW_LIST)
+    def test_upgrade_dst_move_leader(self):
+        self.move_and_upgrade(self.RestartTarget.MOVE_DEST, self.MoveTarget.LEADER)
+
+    @cluster(num_nodes=5, log_allow_list=CHAOS_LOG_ALLOW_LIST)
+    def test_upgrade_dst_move_follower(self):
+        self.move_and_upgrade(self.RestartTarget.MOVE_DEST, self.MoveTarget.FOLLOWER)

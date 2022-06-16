@@ -55,7 +55,8 @@ class RaftAvailabilityTest(RedpandaTest):
                 # Disable leader balancer to enable testing
                 # leadership stability.
                 "enable_leader_balancer": False,
-                "id_allocator_replication": 3
+                "id_allocator_replication": 3,
+                "log_segment_size": 1048576,
             },
             **kwargs)
 
