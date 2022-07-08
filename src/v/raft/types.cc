@@ -222,6 +222,15 @@ async_adl<raft::append_entries_request>::from(iobuf_parser& in) {
     return ss::make_ready_future<raft::append_entries_request>(std::move(ret));
 }
 
+void adl<raft::append_entries_request>::to(
+  iobuf& out, raft::append_entries_request&& request) {
+    async_adl<raft::append_entries_request>{}.to(out, std::move(request)).get();
+}
+
+raft::append_entries_request adl<raft::append_entries_request>::from(iobuf_parser& in) {
+  return async_adl<raft::append_entries_request>{}.from(in).get();
+}
+
 void adl<raft::protocol_metadata>::to(
   iobuf& out, raft::protocol_metadata request) {
     std::array<bytes::value_type, 6 * vint::max_length> staging{};

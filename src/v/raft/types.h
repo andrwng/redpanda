@@ -44,7 +44,7 @@ static constexpr clock_type::time_point no_timeout
   = clock_type::time_point::max();
 
 using group_id = named_type<int64_t, struct raft_group_id_type>;
-struct protocol_metadata {
+struct protocol_metadata : serde::envelope<protocol_metadata, serde::version<0>> {
     group_id group;
     model::offset commit_index;
     model::term_id term;
@@ -54,6 +54,18 @@ struct protocol_metadata {
 
     friend std::ostream&
     operator<<(std::ostream& o, const protocol_metadata& m);
+
+    friend bool operator==(const protocol_metadata&, const protocol_metadata&) = default;
+
+    auto serde_fields() {
+        return std::tie(
+          group,
+          commit_index,
+          term,
+          prev_log_index,
+          prev_log_term,
+          last_visible_index);
+    }
 };
 
 // The sequence used to track the order of follower append entries request
@@ -177,7 +189,7 @@ struct follower_metrics {
     bool under_replicated;
 };
 
-struct append_entries_request {
+struct append_entries_request : serde::envelope<append_entries_request, serde::version<0>> {
     using flush_after_append = ss::bool_class<struct flush_after_append_tag>;
 
     // required for the cases where we will set the target node id before
@@ -203,6 +215,13 @@ struct append_entries_request {
       , meta(m)
       , batches(std::move(r))
       , flush(f){};
+
+    vnode node_id;
+    vnode target_node_id;
+    protocol_metadata meta;
+    model::record_batch_reader batches;
+    flush_after_append flush;
+
     ~append_entries_request() noexcept = default;
     append_entries_request(const append_entries_request&) = delete;
     append_entries_request& operator=(const append_entries_request&) = delete;
@@ -212,11 +231,7 @@ struct append_entries_request {
 
     raft::group_id target_group() const { return meta.group; }
     vnode target_node() const { return target_node_id; }
-    vnode node_id;
-    vnode target_node_id;
-    protocol_metadata meta;
-    model::record_batch_reader batches;
-    flush_after_append flush;
+
     static append_entries_request make_foreign(append_entries_request&& req) {
         return append_entries_request(
           req.node_id,
@@ -224,6 +239,17 @@ struct append_entries_request {
           std::move(req.meta),
           model::make_foreign_record_batch_reader(std::move(req.batches)),
           req.flush);
+    }
+
+    friend bool operator==(const append_entries_request&, const append_entries_request&) = default;
+
+    auto serde_fields() {
+        return std::tie(
+          node_id,
+          target_node_id,
+          meta,
+          batches,
+          flush);
     }
 };
 
@@ -617,6 +643,11 @@ std::ostream& operator<<(std::ostream& o, const append_entries_reply::status&);
 } // namespace raft
 
 namespace reflection {
+template<>
+struct adl<raft::append_entries_request> {
+    void to(iobuf& out, raft::append_entries_request&& request);
+    raft::append_entries_request from(iobuf_parser& in);
+};
 template<>
 struct async_adl<raft::append_entries_request> {
     ss::future<> to(iobuf& out, raft::append_entries_request&& request);
