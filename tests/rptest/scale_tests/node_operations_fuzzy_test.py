@@ -28,6 +28,8 @@ from rptest.tests.end_to_end import EndToEndTest
 DECOMMISSION = "decommission"
 ADD = "add"
 ADD_NO_WAIT = "add_no_wait"
+START_MAINTENANCE = "start_maintenance"
+STOP_MAINTENANCE = "stop_maintenance"
 
 ALLOWED_REPLICATION = [1, 3]
 
@@ -38,10 +40,13 @@ class NodeOperationFuzzyTest(EndToEndTest):
     max_inter_failure_time = 60
 
     def generate_random_workload(self, count, available_nodes):
-        op_types = [ADD, ADD_NO_WAIT, DECOMMISSION]
+        op_types = [
+            ADD, ADD_NO_WAIT, DECOMMISSION, START_MAINTENANCE, STOP_MAINTENANCE
+        ]
         # current state
         active_nodes = list(available_nodes)
         decommissioned_nodes = []
+        maintenance_nodes = []
         operations = []
 
         def decommission(id):
@@ -52,8 +57,23 @@ class NodeOperationFuzzyTest(EndToEndTest):
             active_nodes.append(id)
             decommissioned_nodes.remove(id)
 
+        def start_maintenance(id):
+            active_nodes.remove(id)
+            maintenance_nodes.append(id)
+
+        def stop_maintenance(id):
+            active_nodes.append(id)
+            maintenance_nodes.remove(id)
+
         for _ in range(0, count):
             if len(active_nodes) <= 3:
+                if len(maintenance_nodes) > 0 and bool(random.getrandbits(1)):
+                    # If we have nodes that are in maintenance mode, return
+                    # them from maintenance mode.
+                    id = random.choice(maintenance_nodes)
+                    operations.append((STOP_MAINTENANCE, id))
+                    stop_maintenance(id)
+                    continue
                 id = random.choice(decommissioned_nodes)
                 operations.append((ADD, id))
                 add(id)
@@ -71,6 +91,30 @@ class NodeOperationFuzzyTest(EndToEndTest):
                     id = random.choice(decommissioned_nodes)
                     operations.append((op, id))
                     add(id)
+                elif op == START_MAINTENANCE:
+                    if len(maintenance_nodes) > 0:
+                        # If a node is already in maintenance mode, stop
+                        # maintenance so we can start maintenance elsewhere.
+                        id = maintenance_nodes[0]
+                        operations.append((STOP_MAINTENANCE, id))
+                        stop_maintenance(id)
+                        continue
+
+                    id = random.choice(active_nodes)
+                    operations.append((START_MAINTENANCE, id))
+                    start_maintenance(id)
+                elif op == STOP_MAINTENANCE:
+                    if len(maintenance_nodes) == 0:
+                        # If there are no nodes already in maintenance mode,
+                        # start maintenance somewhere.
+                        id = random.choice(active_nodes)
+                        operations.append((START_MAINTENANCE, id))
+                        start_maintenance(id)
+                        continue
+
+                    id = random.choice(maintenance_nodes)
+                    operations.append((STOP_MAINTENANCE, id))
+                    stop_maintenance(id)
 
         return operations
 
@@ -268,6 +312,40 @@ class NodeOperationFuzzyTest(EndToEndTest):
                     "seed_servers": seed_servers_for(idx)
                 })
 
+        def check_maintenance(admin, node, expect_maintenance):
+            try:
+                status = admin.maintenance_status(node)
+                in_maintenance = status["draining"]
+                if expect_maintenance:
+                    return in_maintenance
+                else:
+                    return not in_maintenance
+            except:
+                return False
+
+        def start_maintenance(idx):
+            node_id = self.ids_mapping[idx]
+            self.logger.info(f"starting maintenance: {idx} with id: {node_id}")
+            admin = Admin(self.redpanda)
+            node = self.redpanda.get_node(idx)
+            admin.maintenance_start(node)
+
+            wait_until(lambda: check_maintenance(
+                admin, node, expect_maintenance=True),
+                       timeout_sec=NODE_OP_TIMEOUT,
+                       backoff_sec=2)
+
+        def stop_maintenance(idx):
+            node_id = self.ids_mapping[idx]
+            self.logger.info(f"stopping maintenance: {idx} with id: {node_id}")
+            admin = Admin(self.redpanda)
+            node = self.redpanda.get_node(idx)
+            admin.maintenance_stop(node)
+            wait_until(lambda: check_maintenance(
+                admin, node, expect_maintenance=False),
+                       timeout_sec=NODE_OP_TIMEOUT,
+                       backoff_sec=2)
+
         def wait_for_new_replicas(idx):
             def has_new_replicas():
                 id = self.ids_mapping[idx]
@@ -300,6 +378,17 @@ class NodeOperationFuzzyTest(EndToEndTest):
                 idx = op[1]
                 self.active_nodes.remove(idx)
                 decommission(idx)
+
+            # NOTE: in running operations, maintenance mode doesn't affect
+            # whether or not the node is considered active; e.g. we can restart
+            # a node in maintenance mode and expect the topics to continue to
+            # be available.
+            if op_type == START_MAINTENANCE:
+                idx = op[1]
+                start_maintenance(idx)
+            if op_type == STOP_MAINTENANCE:
+                idx = op[1]
+                stop_maintenance(idx)
 
         enable_failures = False
         admin_fuzz.wait(20, 180)
