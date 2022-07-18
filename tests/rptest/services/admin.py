@@ -660,31 +660,46 @@ class Admin:
         ret = self._request('post', path=path, node=leader)
         return ret.status_code == 200
 
-    def maintenance_start(self, node):
+    def maintenance_start(self, node, node_id=None):
         """
         Start maintenanceing on node.
+
+        'node_id' may be supplied explicitly, e.g. if the node id has manually
+        been changed as a part of recommissioning.
         """
-        id = self.redpanda.idx(node)
+        id = node_id
+        if not id:
+            id = self.redpanda.idx(node)
         url = f"brokers/{id}/maintenance"
         self.redpanda.logger.info(
             f"Starting maintenance on node {node.name}/{id}")
         return self._request("put", url)
 
-    def maintenance_stop(self, node):
+    def maintenance_stop(self, node, node_id=None):
         """
         Stop maintenanceing on node.
+
+        'node_id' may be supplied explicitly, e.g. if the node id has manually
+        been changed as a part of recommissioning.
         """
-        id = self.redpanda.idx(node)
+        id = node_id
+        if not id:
+            id = self.redpanda.idx(node)
         url = f"brokers/{id}/maintenance"
         self.redpanda.logger.info(
             f"Stopping maintenance on node {node.name}/{id}")
         return self._request("delete", url)
 
-    def maintenance_status(self, node):
+    def maintenance_status(self, node, node_id=None):
         """
         Get maintenance status of a node.
+
+        'node_id' may be supplied explicitly, e.g. if the node id has manually
+        been changed as a part of recommissioning.
         """
-        id = self.redpanda.idx(node)
+        id = node_id
+        if not id:
+            id = self.redpanda.idx(node)
         self.redpanda.logger.info(
             f"Getting maintenance status on node {node.name}/{id}")
         return self._request("get", "maintenance", node=node).json()
