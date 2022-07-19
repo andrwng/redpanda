@@ -7,7 +7,9 @@
 # the Business Source License, use of this software will be governed
 # by the Apache License, Version 2.0
 
+import random
 import re
+import string
 from packaging.version import Version
 
 from ducktape.mark import parametrize
@@ -18,6 +20,8 @@ from rptest.tests.upgrade_with_workload import MixedVersionWorkloadRunner
 from rptest.services.cluster import cluster
 from rptest.services.redpanda import RESTART_LOG_ALLOW_LIST
 from rptest.services.redpanda_installer import InstallOptions, RedpandaInstaller, wait_for_num_versions
+
+from confluent_kafka.admin import AdminClient, ConfigResource, RESOURCE_TOPIC
 
 
 class UpgradeFromSpecificVersion(RedpandaTest):
@@ -226,3 +230,66 @@ class RaftRpcUpgradeTest(EndToEndTest):
     def test_raft_traffic_during_upgrade(self):
         MixedVersionWorkloadRunner.upgrade_with_workload(
             self.redpanda, self.initial_version, self.raft_workload)
+
+
+def rand_with_prefix(prefix):
+    return f"{prefix}-{''.join([random.choice(string.ascii_letters) for _ in range(5)])}"
+
+
+class KafkaRpcUpgradeTest(EndToEndTest):
+    """
+    This test uses admin operations to exercise Kafka admin RPC traffic between
+    two nodes, all the while being upgraded.
+    """
+    def setUp(self):
+        self.initial_version = MixedVersionWorkloadRunner.PRE_SERDE_VERSION
+        install_opts = InstallOptions(version=self.initial_version)
+        extra_rp_conf = dict(enable_leader_balancer=False,
+                             auto_create_topics_enabled=True)
+        self.start_redpanda(num_nodes=3,
+                            install_opts=install_opts,
+                            extra_rp_conf=extra_rp_conf)
+
+    @cluster(num_nodes=3)
+    def test_create_topics(self):
+        self.created_topics = []
+
+        def create_and_update_random_topic(src_node, dst_node):
+            admin = self.redpanda._admin
+            dst_id = self.redpanda.idx(dst_node)
+            # Move controller leadership to 'dst_node'. The client will send a
+            # request to 'src_node' and Redpanda to forward a request to
+            # 'dst_node'.
+            admin.transfer_leadership_to(namespace="redpanda",
+                                         topic="controller",
+                                         partition=0,
+                                         target_id=dst_id)
+            admin.await_stable_leader(namespace="redpanda",
+                                      topic="controller",
+                                      partition=0)
+            topic_name = rand_with_prefix("topic")
+            # Leave only 'src_node' in the bootstrap servers to encourage the
+            # initial request to go to it.
+            ac1 = AdminClient(
+                {"bootstrap.servers": self.redpanda.broker_address(src_node)})
+            ac1.list_topics(topic_name)
+            self.created_topics.append(topic_name)
+
+            # Create a new client to reset its metadata.
+            ac2 = AdminClient(
+                {"bootstrap.servers": self.redpanda.broker_address(src_node)})
+            resources = [
+                ConfigResource(RESOURCE_TOPIC,
+                               topic_name,
+                               set_config={"retention.ms": "1000"})
+            ]
+            ac2.alter_configs(resources)
+
+        MixedVersionWorkloadRunner.upgrade_with_workload(
+            self.redpanda, self.initial_version,
+            create_and_update_random_topic)
+
+        ck_admin = AdminClient({"bootstrap.servers": self.redpanda.brokers()})
+        num_topics = len(ck_admin.list_topics().topics)
+        num_expected = len(self.created_topics)
+        assert num_topics == num_expected, f"Expected {num_expected} topics, got {num_topics}"
