@@ -396,6 +396,27 @@ class AdminRpcUpgradeTest(EndToEndTest):
         # Get the health monitor status, which dispatches to the leader.
         _ = src_admin.get_cluster_view(src_node)
 
+        def change_config_and_wait(new_config_value):
+            cluster_config_upsert = dict(
+                {'log_message_timestamp_type': new_config_value})
+            patch_result = src_admin.patch_cluster_config(
+                upsert=cluster_config_upsert, node=src_node)
+            new_version = patch_result["config_version"]
+            wait_until(
+                lambda: set([
+                    n['config_version']
+                    for n in src_admin.get_cluster_config_status()
+                ]) == {new_version},
+                timeout_sec=10,
+                backoff_sec=0.5,
+                err_msg=
+                f"Config status versions did not converge on {new_version}")
+
+        # Change the value a couple times so we're guaranteed that repeated
+        # runs of this function actually change the value.
+        change_config_and_wait("CreateTime")
+        change_config_and_wait("LogAppendTime")
+
     @cluster(num_nodes=6,
              log_allow_list=MixedVersionWorkloadRunner.ALLOWED_LOGS)
     def test_admin_rpcs(self):
