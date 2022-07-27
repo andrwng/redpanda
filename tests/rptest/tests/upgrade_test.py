@@ -24,7 +24,8 @@ from rptest.services.cluster import cluster
 from rptest.services.redpanda import RESTART_LOG_ALLOW_LIST
 from rptest.services.redpanda_installer import InstallOptions, RedpandaInstaller, wait_for_num_versions
 
-from confluent_kafka.admin import AdminClient, ConfigResource, RESOURCE_TOPIC
+from confluent_kafka.admin import AclBinding, AclBindingFilter, AclOperation, AclPermissionType, \
+    AdminClient, ConfigResource, ResourceType, ResourcePatternType
 
 
 class UpgradeFromSpecificVersion(RedpandaTest):
@@ -258,6 +259,13 @@ class KafkaRpcUpgradeTest(EndToEndTest):
         self.created_topics = []
 
         def create_and_update_random_topic(src_node, dst_node):
+            topic_name = rand_with_prefix("topic")
+            spec = TopicSpec(name=topic_name,
+                             partition_count=2,
+                             replication_factor=3)
+            self.client().create_topic(spec)
+            self.created_topics.append(topic_name)
+
             admin = self.redpanda._admin
             dst_id = self.redpanda.idx(dst_node)
             # Move controller leadership to 'dst_node'. The client will send a
@@ -282,20 +290,47 @@ class KafkaRpcUpgradeTest(EndToEndTest):
             ac2 = AdminClient(
                 {"bootstrap.servers": self.redpanda.broker_address(src_node)})
             resources = [
-                ConfigResource(RESOURCE_TOPIC,
+                ConfigResource(ResourceType.TOPIC,
                                topic_name,
                                set_config={"retention.ms": "1000"})
             ]
             ac2.alter_configs(resources)
+
+            acl_binding = AclBinding(ResourceType.TOPIC, topic_name,
+                                     ResourcePatternType.LITERAL, "fake_user",
+                                     "*", AclOperation.WRITE,
+                                     AclPermissionType.ALLOW)
+            ac3 = AdminClient(
+                {"bootstrap.servers": self.redpanda.broker_address(src_node)})
+            ac3.create_acls([acl_binding])
+
+            acl_binding_filter = AclBindingFilter(ResourceType.ANY, topic_name,
+                                                  ResourcePatternType.MATCH,
+                                                  None, "*",
+                                                  AclOperation.WRITE,
+                                                  AclPermissionType.ALLOW)
+            ac4 = AdminClient(
+                {"bootstrap.servers": self.redpanda.broker_address(src_node)})
+            ac4.delete_acls([acl_binding_filter])
 
         MixedVersionWorkloadRunner.upgrade_with_workload(
             self.redpanda, self.initial_version,
             create_and_update_random_topic)
 
         ck_admin = AdminClient({"bootstrap.servers": self.redpanda.brokers()})
-        num_topics = len(ck_admin.list_topics().topics)
         num_expected = len(self.created_topics)
-        assert num_topics == num_expected, f"Expected {num_expected} topics, got {num_topics}"
+
+        def check_expected_topics():
+            topics = ck_admin.list_topics().topics
+            if num_expected == len(topics):
+                return True
+            self.logger.info(
+                f"Expected topics: {self.created_topics}, got {topics}")
+            return False
+
+        wait_until(lambda: check_expected_topics(),
+                   timeout_sec=15,
+                   backoff_sec=1)
 
 
 class AdminRpcUpgradeTest(EndToEndTest):
