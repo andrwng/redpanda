@@ -88,7 +88,7 @@ RUN mkdir -p "/opt/kafka-2.3.1" && chmod a+rw /opt/kafka-2.3.1 && curl -s "$KAFK
     mkdir -p "/opt/kafka-3.0.0" && chmod a+rw /opt/kafka-3.0.0 && curl -s "$KAFKA_MIRROR/kafka_2.12-3.0.0.tgz" | tar xz --strip-components=1 -C "/opt/kafka-3.0.0" && \
     ln -s /opt/kafka-3.0.0 /opt/kafka-dev && \
     mkdir /opt/librdkafka && \
-    curl -SL "https://github.com/edenhill/librdkafka/archive/v1.8.0.tar.gz" | tar -xz --strip-components=1 -C /opt/librdkafka && \
+    curl -SL "https://github.com/edenhill/librdkafka/archive/v1.9.0.tar.gz" | tar -xz --strip-components=1 -C /opt/librdkafka && \
     cd /opt/librdkafka && \
     ./configure && \
     make -j$(nproc) && \
@@ -135,6 +135,15 @@ EXPOSE 8080
 # copy ssh keys
 COPY --chown=0:0 tests/docker/ssh /root/.ssh
 
+# Clone and install the arroyo client library in order to run its test suite.
+# Do the installation before setting up our python dependencies so our test
+# dependencies take precedence over those installed here.
+# TODO: consider a separate arroyo fork with dependencies harmonized to ours.
+RUN mkdir /root/external_test_suites && \
+    git -C /root/external_test_suites clone -b 1.0.0 --depth=1 https://github.com/getsentry/arroyo.git && \
+    cd /root/external_test_suites/arroyo && \
+    python3 -m pip install --force --no-cache-dir -e /root/external_test_suites/arroyo
+
 # install python dependencies and rptest package.
 # rptest package installed in editable mode so it can be overridden.
 # passes --force so system pip packages can be updated
@@ -163,12 +172,6 @@ RUN apt update && \
     apt install -y \
       file && \
     rm -rf /var/lib/apt/lists/*
-
-# Clone and install the arroyo client library in order to run its test suite.
-RUN mkdir /root/external_test_suites && \
-    git -C /root/external_test_suites clone -b 1.0.0 --depth=1 https://github.com/getsentry/arroyo.git && \
-    cd /root/external_test_suites/arroyo && \
-    python3 -m pip install --force --no-cache-dir -e /root/external_test_suites/arroyo
 
 RUN mkdir -p /opt/scripts && \
     curl https://raw.githubusercontent.com/redpanda-data/seastar/2a9504b3238cba4150be59353bf8d0b3a01fe39c/scripts/addr2line.py -o /opt/scripts/addr2line.py && \
