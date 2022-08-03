@@ -104,7 +104,7 @@ class UpgradeWithWorkloadTest(EndToEndTest):
         super(UpgradeWithWorkloadTest, self).setUp()
         # Start at a version that supports rolling restarts.
         self.initial_version = (22, 1, 3)
-        self.producer_msgs_per_sec = 200
+        self.producer_msgs_per_sec = 1
         install_opts = InstallOptions(version=self.initial_version)
         self.start_redpanda(num_nodes=3, install_opts=install_opts)
         self.installer = self.redpanda._installer
