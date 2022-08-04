@@ -255,10 +255,17 @@ class KafkaRpcUpgradeTest(EndToEndTest):
                             extra_rp_conf=extra_rp_conf)
 
     @cluster(num_nodes=3)
-    def test_create_topics(self):
+    def test_kafka_rpcs(self):
         self.created_topics = []
+        ck_admin = AdminClient({"bootstrap.servers": self.redpanda.brokers()})
 
         def create_and_update_random_topic(src_node, dst_node):
+            """
+            Creates a topic and updates it using the Kafka API. Requests are
+            sent first to 'src_node' and 'dst_node' is made the controller
+            leader to deterministically encourage RPC dispatch from 'src_node'
+            to 'dst_node'.
+            """
             topic_name = rand_with_prefix("topic")
             spec = TopicSpec(name=topic_name,
                              partition_count=2,
@@ -279,45 +286,56 @@ class KafkaRpcUpgradeTest(EndToEndTest):
                                       topic="controller",
                                       partition=0)
             topic_name = rand_with_prefix("topic")
-            # Leave only 'src_node' in the bootstrap servers to encourage the
-            # initial request to go to it.
-            ac1 = AdminClient(
-                {"bootstrap.servers": self.redpanda.broker_address(src_node)})
-            ac1.list_topics(topic_name)
+            def send_to_src(fn):
+                # Leave only 'src_node' in the bootstrap servers to encourage
+                # the initial request to go to it.
+                a = AdminClient(
+                    {"bootstrap.servers": self.redpanda.broker_address(src_node)})
+                fn(a)
+
+            send_to_src(lambda a: a.list_topics(topic_name))
             self.created_topics.append(topic_name)
 
             # Create a new client to reset its metadata.
-            ac2 = AdminClient(
-                {"bootstrap.servers": self.redpanda.broker_address(src_node)})
             resources = [
                 ConfigResource(ResourceType.TOPIC,
                                topic_name,
                                set_config={"retention.ms": "1000"})
             ]
-            ac2.alter_configs(resources)
+            send_to_src(lambda a: a.alter_configs(resources))
 
+            # Check that ACLs work.
             acl_binding = AclBinding(ResourceType.TOPIC, topic_name,
-                                     ResourcePatternType.LITERAL, "fake_user",
+                    ResourcePatternType.LITERAL, "User:fake_user",
                                      "*", AclOperation.WRITE,
                                      AclPermissionType.ALLOW)
-            ac3 = AdminClient(
-                {"bootstrap.servers": self.redpanda.broker_address(src_node)})
-            ac3.create_acls([acl_binding])
 
+            send_to_src(lambda a: a.create_acls([acl_binding]))
             acl_binding_filter = AclBindingFilter(ResourceType.ANY, topic_name,
                                                   ResourcePatternType.MATCH,
                                                   None, "*",
                                                   AclOperation.WRITE,
                                                   AclPermissionType.ALLOW)
-            ac4 = AdminClient(
-                {"bootstrap.servers": self.redpanda.broker_address(src_node)})
-            ac4.delete_acls([acl_binding_filter])
+
+            def check_expected_acl(expected_acls):
+                described_bindings = ck_admin.describe_acls(acl_binding_filter).result()
+                self.logger.info(
+                    f"Expected acls: {expected_acls}, got {described_bindings}")
+                return expected_acls == described_bindings
+
+            wait_until(lambda: check_expected_acl([acl_binding]),
+                       timeout_sec=15,
+                       backoff_sec=1)
+            
+            send_to_src(lambda a: a.delete_acls([acl_binding_filter]))
+            wait_until(lambda: check_expected_acl([]),
+                       timeout_sec=15,
+                       backoff_sec=1)
 
         MixedVersionWorkloadRunner.upgrade_with_workload(
             self.redpanda, self.initial_version,
             create_and_update_random_topic)
 
-        ck_admin = AdminClient({"bootstrap.servers": self.redpanda.brokers()})
         num_expected = len(self.created_topics)
 
         def check_expected_topics():
