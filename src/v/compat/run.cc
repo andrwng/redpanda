@@ -11,11 +11,15 @@
 #include "compat/run.h"
 
 #include "cluster/types.h"
+#include "compat/abort_tx_compat.h"
+#include "compat/begin_group_tx_compat.h"
 #include "compat/begin_tx_compat.h"
 #include "compat/check.h"
 #include "compat/cluster_compat.h"
+#include "compat/commit_tx_compat.h"
 #include "compat/init_tm_tx_compat.h"
 #include "compat/metadata_dissemination_compat.h"
+#include "compat/prepare_group_tx_compat.h"
 #include "compat/prepare_tx_compat.h"
 #include "compat/raft_compat.h"
 #include "compat/try_abort_compat.h"
@@ -65,7 +69,15 @@ using compat_checks = type_list<
   cluster::prepare_tx_request,
   cluster::prepare_tx_reply,
   cluster::try_abort_request,
-  cluster::try_abort_reply>;
+  cluster::try_abort_reply,
+  cluster::abort_tx_request,
+  cluster::abort_tx_reply,
+  cluster::begin_group_tx_request,
+  cluster::begin_group_tx_reply,
+  cluster::prepare_group_tx_request,
+  cluster::prepare_group_tx_reply,
+  cluster::commit_tx_request,
+  cluster::commit_tx_reply>;
 
 struct compat_error final : public std::runtime_error {
 public:
