@@ -13,11 +13,14 @@ from ducktape.cluster.cluster_spec import ClusterSpec
 from ducktape.mark import matrix
 
 import os
+from paramiko import SSHClient, SSHConfig, MissingHostKeyPolicy
+from paramiko.ssh_exception import SSHException, NoValidConnectionsError
 
 from rptest.clients.rpk import RpkTool
 from rptest.clients.types import TopicSpec
 from rptest.tests.prealloc_nodes import PreallocNodesTest
 from rptest.services.redpanda import SISettings, RESTART_LOG_ALLOW_LIST
+from rptest.services.redpanda_installer import RedpandaInstaller
 from rptest.services.franz_go_verifiable_services import (
     FranzGoVerifiableProducer,
     FranzGoVerifiableSeqConsumer,
@@ -95,6 +98,113 @@ class FranzGoVerifiableTest(FranzGoVerifiableBase):
 
         self._producer.wait()
         assert self._producer.produce_status.acked == self.PRODUCE_COUNT
+
+        for consumer in self._consumers:
+            consumer.shutdown()
+        for consumer in self._consumers:
+            consumer.wait()
+
+        assert self._seq_consumer.consumer_status.valid_reads >= wrote_at_least
+        assert self._rand_consumer.consumer_status.total_reads == self.RANDOM_READ_COUNT * self.RANDOM_READ_PARALLEL
+        assert self._cg_consumer.consumer_status.valid_reads >= wrote_at_least
+
+
+PREV_VERSION_LOG_ALLOW_LIST = [
+    # e.g. cluster - controller_backend.cc:400 - Error while reconciling topics - seastar::abort_requested_exception (abort requested)
+    "cluster - .*Error while reconciling topic.*",
+    # Typo fixed in recent versions.
+    # e.g.  raft - [follower: {id: {1}, revision: {10}}] [group_id:3, {kafka/topic/2}] - recovery_stm.cc:422 - recovery append entries error: raft group does not exists on target broker
+    "raft - .*raft group does not exists on target broker",
+    # e.g. rpc - Service handler thrown an exception - seastar::gate_closed_exception (gate closed)
+    "rpc - .*gate_closed_exception.*",
+    # Tests on mixed versions will start out with an unclean restart before
+    # starting a workload.
+    "(raft|rpc) - .*(disconnected_endpoint|Broken pipe|Connection reset by peer)"
+]
+
+
+class FranzGoVerifiableUpgradesTest(FranzGoVerifiableBase):
+    MSG_SIZE = 1000
+    PRODUCE_COUNT = 750000
+    RANDOM_READ_COUNT = 5000
+    RANDOM_READ_PARALLEL = 8
+    CONSUMER_GROUP_READERS = 4
+
+    topics = (TopicSpec(partition_count=10, replication_factor=3), )
+
+    def __init__(self, test_context):
+        super(FranzGoVerifiableUpgradesTest, self).__init__(test_context,
+                                                            num_brokers=3)
+        self.installer = self.redpanda._installer
+        # HACK: for now, pretend dev is release 22.2.x so we can upgrade to it
+        # from the latest prior version. The --version flag produced by the
+        # binaries only points to already released tags.
+        self.current_logical_version = (22, 2, 1)
+        self.intermediate_version = self.installer.highest_from_prior_feature_version(
+            self.current_logical_version)
+        self.initial_version = self.installer.highest_from_prior_feature_version(
+            self.intermediate_version)
+        self.test_context = test_context
+
+    def setUp(self):
+        self.installer.install(self.redpanda.nodes, self.initial_version)
+        super(FranzGoVerifiableUpgradesTest, self).setUp()
+
+    @cluster(num_nodes=4,
+             log_allow_list=PREV_VERSION_LOG_ALLOW_LIST +
+             ["heartbeat_manager.cc.*Could not find consensus for group"])
+    def test_upgrade_with_all_workloads(self):
+        self._producer.start(clean=False)
+        wait_until(lambda: self._producer.produce_status.acked > 0,
+                   timeout_sec=30,
+                   backoff_sec=0.1)
+        wrote_at_least = self._producer.produce_status.acked
+        for consumer in self._consumers:
+            consumer.start(clean=False)
+
+        def stop_producer():
+            wrote_at_least = self._producer.produce_status.acked
+            self._producer.wait()
+            assert self._producer.produce_status.acked == self.PRODUCE_COUNT
+            return wrote_at_least
+
+        produce_during_upgrade = self.initial_version >= (22, 1, 0)
+        wrote_at_least = 0
+        if produce_during_upgrade:
+            # Give ample time to restart, given the running workload.
+            self.installer.install(self.redpanda.nodes, self.intermediate_version)
+            self.redpanda.rolling_restart_nodes(self.redpanda.nodes,
+                                                start_timeout=90,
+                                                stop_timeout=90)
+        else:
+            # If there's no maintenance mode, write workloads during the
+            # restart may be affected, so stop our writes up front.
+            wrote_at_least = stop_producer()
+            self.installer.install(self.redpanda.nodes, self.intermediate_version)
+            self.redpanda.rolling_restart_nodes(self.redpanda.nodes,
+                                                start_timeout=90,
+                                                stop_timeout=90)
+
+            # When upgrading from versions that don't support maintenance mode
+            # (v21.11 and below), there is a migration of the consumer offsets
+            # topic to be mindful of.
+            rpk = RpkTool(self.redpanda)
+            def _consumer_offsets_present():
+                try:
+                    rpk.describe_topic("__consumer_offsets")
+                except Exception as e:
+                    if "Topic not found" in str(e):
+                        return False
+                return True
+            wait_until(_consumer_offsets_present, timeout_sec=90, backoff_sec=3)
+
+        self.installer.install(self.redpanda.nodes, RedpandaInstaller.HEAD)
+        self.redpanda.rolling_restart_nodes(self.redpanda.nodes,
+                                            start_timeout=90,
+                                            stop_timeout=90)
+
+        if produce_during_upgrade:
+            wrote_at_least = stop_producer()
 
         for consumer in self._consumers:
             consumer.shutdown()

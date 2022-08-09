@@ -7,18 +7,22 @@
 # the Business Source License, use of this software will be governed
 # by the Apache License, Version 2.0
 
-import os
 import json
+import os
+import re
 import threading
 from rptest.services.redpanda import RedpandaService
 from ducktape.services.background_thread import BackgroundThreadService
 from ducktape.utils.util import wait_until
+from ducktape.cluster.remoteaccount import RemoteCommandError, SSHOutputIter
 
 # The franz-go root directory
 TESTS_DIR = os.path.join("/opt", "kgo-verifier")
 
 from enum import Enum
 
+from paramiko import SSHClient, SSHConfig, MissingHostKeyPolicy
+from paramiko.ssh_exception import SSHException, NoValidConnectionsError
 
 class ServiceStatus(Enum):
     SETUP = 1
@@ -63,16 +67,67 @@ class FranzGoVerifiableService(BackgroundThreadService):
         raise NotImplementedError()
 
     def execute_cmd(self, cmd, node):
-        for line in node.account.ssh_capture(cmd):
-            if self._pid is None:
-                self._pid = line.strip()
+        class IgnoreMissingHostKeyPolicy(MissingHostKeyPolicy):
+            def missing_host_key(self, client, hostname, key):
+                return
+        def ssh_for_account(account):
+            """
+            Taken from remoteaccount.py.
+            """
+            client = SSHClient()
+            client.set_missing_host_key_policy(IgnoreMissingHostKeyPolicy())
+            ssh_config = account.ssh_config
+            client.connect(
+                hostname=ssh_config.hostname,
+                port=ssh_config.port,
+                username=ssh_config.user,
+                password=ssh_config.password,
+                key_filename=ssh_config.identityfile,
+                look_for_keys=False)
+            return client
 
-            if self._stopping.is_set():
-                break
+        def ssh_capture(client, cmd):
+            """
+            Taken from remoteaccount.py.
+            """
+            chan = client.get_transport().open_session(timeout=None)
 
-            line = line.rstrip()
-            self.logger.debug(line)
-            yield line
+            chan.settimeout(None)
+            chan.exec_command(cmd)
+            chan.set_combine_stderr(True)
+
+            stdin = chan.makefile('wb', -1)  # set bufsize to -1
+            stdout = chan.makefile('r', -1)
+            stderr = chan.makefile_stderr('r', -1)
+
+            def output_generator():
+                for line in iter(stdout.readline, ''):
+                    yield line
+                try:
+                    exit_status = stdout.channel.recv_exit_status()
+                    if exit_status != 0:
+                        raise RemoteCommandError(self, cmd, exit_status, stderr.read())
+                finally:
+                    stdin.close()
+                    stdout.close()
+                    stderr.close()
+
+            return SSHOutputIter(output_generator, stdout)
+
+        client = ssh_for_account(node.account)
+        try:
+            for line in ssh_capture(client, cmd):
+                if self._pid is None:
+                    self._pid = line.strip()
+
+                if self._stopping.is_set():
+                    break
+
+                line = line.rstrip()
+                self.logger.debug(line)
+                yield line
+        finally:
+            client.close()
 
     def save_exception(self, ex):
         if self._stopping.is_set():
@@ -214,6 +269,9 @@ class FranzGoVerifiableRandomConsumer(FranzGoVerifiableService):
     def _worker(self, idx, node):
         self.status = ServiceStatus.RUNNING
         self._stopping.clear()
+        # The produce can sometimes squash lines together. Just take the first
+        # JSON-like substring.
+        RE_IN_BRACKETS = re.compile("^({[^}]*}).*")
         try:
             while not self._stopping.is_set(
             ) and not self._shutting_down.is_set():
@@ -223,9 +281,12 @@ class FranzGoVerifiableRandomConsumer(FranzGoVerifiableService):
                     self._parallel)
 
                 for line in self.execute_cmd(cmd, node):
-                    if not line.startswith("{"):
+                    if RE_IN_BRACKETS.match(line) is None:
                         continue
-                    data = json.loads(line)
+                    first_brackets_in_line = RE_IN_BRACKETS.findall(line)[0]
+                    data = None
+                    data = json.loads(first_brackets_in_line)
+
                     self._consumer_status = ConsumerStatus(
                         data['ValidReads'], data['InvalidReads'],
                         data['OutOfScopeInvalidReads'])

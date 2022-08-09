@@ -40,6 +40,21 @@ class RollingRestarter:
             except requests.exceptions.HTTPError:
                 return False
 
+        def start_and_wait_maintenance_mode(node):
+            try:
+                admin.maintenance_start(node)
+            except requests.exceptions.HTTPError as e:
+                # In case the node doesn't support maintenance mode (e.g. in an
+                # upgrade test), move on.
+                if "Not Found" in str(e) or "Bad Request" in str(e):
+                    return False
+                raise
+
+            wait_until(lambda: has_drained_leaders(node),
+                       timeout_sec=stop_timeout,
+                       backoff_sec=1)
+            return True
+
         # TODO: incorporate rack awareness into this to support updating
         # multiple nodes at a time.
         for node in nodes:
@@ -47,11 +62,7 @@ class RollingRestarter:
                        timeout_sec=stop_timeout,
                        backoff_sec=1)
 
-            admin.maintenance_start(node)
-
-            wait_until(lambda: has_drained_leaders(node),
-                       timeout_sec=stop_timeout,
-                       backoff_sec=1)
+            supports_maintenance = start_and_wait_maintenance_mode(node)
 
             wait_until(lambda: self.redpanda.healthy(),
                        timeout_sec=stop_timeout,
@@ -67,4 +78,5 @@ class RollingRestarter:
                        timeout_sec=start_timeout,
                        backoff_sec=1)
 
-            admin.maintenance_stop(node)
+            if supports_maintenance:
+                admin.maintenance_stop(node)
