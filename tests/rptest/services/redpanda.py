@@ -484,13 +484,15 @@ class RedpandaService(Service):
                  security: SecurityConfig = SecurityConfig(),
                  node_ready_timeout_s=None,
                  superuser: Optional[SaslCredentials] = None,
-                 skip_if_no_redpanda_log: bool = False):
+                 skip_if_no_redpanda_log: bool = False,
+                 cluster_config_in_rp_yaml : bool = False):
         super(RedpandaService, self).__init__(context, num_nodes=num_brokers)
         self._context = context
         self._extra_rp_conf = extra_rp_conf or dict()
         self._enable_pp = enable_pp
         self._enable_sr = enable_sr
         self._security = security
+        self._cluster_config_in_rp_yaml = cluster_config_in_rp_yaml
         self._installer: RedpandaInstaller = RedpandaInstaller(self)
 
         if superuser is None:
@@ -1523,12 +1525,21 @@ class RedpandaService(Service):
         # exercise code paths that deal with multiple listeners
         node_ip = socket.gethostbyname(node.account.hostname)
 
+        node_conf_yaml = ""
+        if self._cluster_config_in_rp_yaml:
+            node_conf_yaml = self.get_bootstrap_cluster_config_yaml()
+            tmp = []
+            for line in node_conf_yaml.split("\n"):
+                tmp.append(f"  {line}")
+            node_conf_yaml = "\n".join(tmp)
+
         conf = self.render("redpanda.yaml",
                            node=node,
                            data_dir=RedpandaService.DATA_DIR,
                            nodes=node_info,
                            node_id=self.idx(node),
                            node_ip=node_ip,
+                           legacy_config_yaml=node_conf_yaml,
                            kafka_alternate_port=self.KAFKA_ALTERNATE_PORT,
                            admin_alternate_port=self.ADMIN_ALTERNATE_PORT,
                            enable_pp=self._enable_pp,
@@ -1571,14 +1582,16 @@ class RedpandaService(Service):
 
         self._node_configs[node] = yaml.full_load(conf)
 
-    def write_bootstrap_cluster_config(self):
+    def get_bootstrap_cluster_config_yaml(self):
+        """
+        Returns YAML of the cluster config.
+        """
         conf = copy.deepcopy(self.CLUSTER_CONFIG_DEFAULTS)
         if self._extra_rp_conf:
             self.logger.debug(
                 "Setting custom cluster configuration options: {}".format(
                     self._extra_rp_conf))
             conf.update(self._extra_rp_conf)
-
         if self._security.enable_sasl:
             self.logger.debug("Enabling SASL in cluster configuration")
             conf.update(dict(enable_sasl=True))
@@ -1589,8 +1602,11 @@ class RedpandaService(Service):
             conf.update(
                 dict(kafka_enable_authorization=self._security.
                      kafka_enable_authorization))
+        return yaml.dump(conf)
 
-        conf_yaml = yaml.dump(conf)
+
+    def write_bootstrap_cluster_config(self):
+        conf_yaml = self.get_bootstrap_cluster_config_yaml()
         for node in self.nodes:
             self.logger.info(
                 "Writing bootstrap cluster config file {}:{}".format(
@@ -1971,7 +1987,7 @@ class RedpandaService(Service):
         the health of a node after a restart.
         """
         counts = {self.idx(node): None for node in self.nodes}
-        for node in self.nodes:
+        for node in self._started:
             try:
                 metrics = self.metrics(node)
             except:
