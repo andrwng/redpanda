@@ -267,6 +267,13 @@ class NodeOperationFuzzyTest(EndToEndTest):
             return node_replicas
 
         def seed_servers_for(idx):
+            # ret = []
+            # node = self.redpanda.get_node(idx)
+            # for n in self.redpanda.nodes:
+            #     if n.account.hostname == node.account.hostname:
+            #         continue
+            #     ret.append({"address": n.account.hostname, "port": 33145})
+            # return ret
             seeds = map(
                 lambda n: {
                     "address": n.account.hostname,
@@ -275,8 +282,8 @@ class NodeOperationFuzzyTest(EndToEndTest):
 
             return list(
                 filter(
-                    lambda n: n['address'] != self.redpanda.get_node(idx).
-                    account.hostname, seeds))
+                    lambda n: n['address'] != self.redpanda.get_node(idx).account.hostname,
+                    seeds))
 
         def add_node(idx, cleanup=True):
             id = get_next_id()

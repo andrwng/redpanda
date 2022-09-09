@@ -34,11 +34,11 @@ from rptest.services.redpanda_installer import InstallOptions, RedpandaInstaller
 # Repro test case for Lacework.
 class EmptyNodeTest(PreallocNodesTest, PartitionMovementMixin):
 
-    MSG_SIZE = 100
-    PRODUCE_COUNT = 2500
-    RANDOM_READ_COUNT = 100
-    RANDOM_READ_PARALLEL = 4
-    CONSUMER_GROUP_READERS = 4
+    MSG_SIZE = 10
+    PRODUCE_COUNT = 250
+    RANDOM_READ_COUNT = 10
+    RANDOM_READ_PARALLEL = 1
+    CONSUMER_GROUP_READERS = 1
 
     topics = (TopicSpec(partition_count=10, replication_factor=3), )
 
@@ -112,6 +112,16 @@ class EmptyNodeTest(PreallocNodesTest, PartitionMovementMixin):
                 return 4
             return bounded
 
+        # Decommission a node so we start out with three servers.
+        down_node_id = bounded_node_id(initial_node_id + 3)
+        admin.decommission_broker(down_node_id)
+        time.sleep(30)
+        down_node = self.redpanda.get_node(down_node_id)
+        self.redpanda.stop_node(down_node)
+        self.redpanda.clean_node(down_node,
+                                 preserve_logs=True,
+                                 preserve_current_install=True)
+
         initial_three_assignment = []
         for i in range(3):
             initial_three_assignment.append(
@@ -129,17 +139,13 @@ class EmptyNodeTest(PreallocNodesTest, PartitionMovementMixin):
             return len(pd.replicas) == 3
         wait_until(has_three_replicas, timeout_sec=30, backoff_sec=1)
 
-        # We'll decommission a node to trigger a config change.
-        node_to_decom = bounded_node_id(initial_node_id + 1)
-
-        self.logger.warn(f"Decommissioning node {node_to_decom}")
-
         # Make the config change last some time by restarting the
         # 'id_allocator' leader and forcing a re-election.
         # Make sure we don't disrupt the controller though (force it to move
         # elsewhere), and make sure we placement on the node we're going to
         # wipe (the initial node). We'll do this by assigning leadership manually.
         id_allocator_leader_id = bounded_node_id(initial_node_id + 2)
+        admin.await_stable_leader("id_allocator", partition=0, namespace="kafka_internal", timeout_s=30)
         admin.transfer_leadership_to(namespace="kafka_internal",
                                      topic="id_allocator",
                                      partition=0,
@@ -148,19 +154,47 @@ class EmptyNodeTest(PreallocNodesTest, PartitionMovementMixin):
                                         namespace="kafka_internal",
                                         timeout_s=30)
 
-        controller_leader_id = bounded_node_id(id_allocator_leader_id + 1)
-        admin.transfer_leadership_to(namespace="redpanda",
-                                     topic="controller",
-                                     partition=0,
-                                     target_id=controller_leader_id)
-        admin.await_stable_leader("controller", partition=0, namespace="redpanda", timeout_s=30)
+        # controller_leader_id = bounded_node_id(id_allocator_leader_id + 1)
+        # controller_leader = self.redpanda.get_node(controller_leader_id)
+        # admin.await_stable_leader("controller", partition=0, namespace="redpanda", timeout_s=30)
+        # admin.transfer_leadership_to(namespace="redpanda",
+        #                              topic="controller",
+        #                              partition=0,
+        #                              target_id=controller_leader_id)
+        # admin.await_stable_leader("controller", partition=0, namespace="redpanda", timeout_s=30)
 
-        id_allocator_leader = self.redpanda.get_node(id_allocator_leader_id)
-        self.redpanda.restart_nodes(id_allocator_leader)
+        # Stop the initial node to bring back empty.
+        self.redpanda.stop_node(self.redpanda.get_node(initial_node_id))
 
-        # Hit the controller with a decommission request.
-        admin.decommission_broker(node_to_decom,
-                                  node=self.redpanda.get_node(controller_leader_id))
+        # We'll decommission a node to trigger a config change. This will not
+        # actually move any replicas because we only have three nodes, so the
+        # decommissioning will never complete.
+        node_to_decom = bounded_node_id(initial_node_id + 1)
+        self.logger.warn(f"Attempting decommission on node {node_to_decom}")
+
+        # Hit the controller with a decommission request. We shouldn't be able
+        # to fully decommission it because we're left with just two nodes.
+        initial_node = self.redpanda.get_node(initial_node_id)
+        def decom():
+            try:
+                admin.decommission_broker(node_to_decom, node=initial_node)
+            except:
+                return False
+            return True
+        wait_until(decom, timeout_sec=30, backoff_sec=1)
+        time.sleep(10)
+
+        admin.recommission_broker(node_to_decom, node=initial_node)
+
+        # Start our downed node with a new node ID, as if we just added a brand
+        # new node.
+        self.redpanda.start_node(
+            down_node,
+            timeout=90,
+            override_cfg_params={
+                "node_id": 5,
+                "seed_servers": [{"address": initial_node.account.hostname, "port": 33145}]
+            })
 
         # Restart the initial node with an empty disk, encouraging it to replay
         # and incorrectly apply controller operations. We should see this node
@@ -169,12 +203,13 @@ class EmptyNodeTest(PreallocNodesTest, PartitionMovementMixin):
         initial_node = self.redpanda.get_node(initial_node_id)
         self.redpanda.stop_node(initial_node)
         self.redpanda.clean_node(initial_node,
-                                 preserve_logs=False,
+                                 preserve_logs=True,
                                  preserve_current_install=True)
         self.redpanda.write_node_conf_file(initial_node)
         self.redpanda.start_node(initial_node)
         time.sleep(5)
 
+        admin.decommission_broker(initial_node_id, node=initial_node)
 
         self._producer.wait()
         for consumer in self._consumers:
