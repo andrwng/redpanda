@@ -29,7 +29,6 @@ public:
         app.initialize(proxy_config(), proxy_client_config());
         app.check_environment();
         app.configure_admin_server();
-        app.wire_up_services();
         app.start(*app_signal);
     }
 

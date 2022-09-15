@@ -82,7 +82,6 @@ public:
           sch_groups);
         app.check_environment();
         app.configure_admin_server();
-        app.wire_up_services();
         app.start(*app_signal);
 
         // used by request context builder

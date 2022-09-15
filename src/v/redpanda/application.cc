@@ -903,7 +903,7 @@ void application::wire_up_redpanda_services() {
     }
 
     // group membership
-    syschecks::systemd_message("Creating partition manager").get();
+    syschecks::systemd_message("Creating kafka group managers").get();
     construct_service(
       _group_manager,
       model::kafka_group_nt,
@@ -1229,6 +1229,7 @@ application::set_proxy_client_config(ss::sstring name, std::any val) {
 }
 
 void application::start(::stop_signal& app_signal) {
+    wire_up_services();
     start_redpanda(app_signal);
 
     if (_proxy_config) {
