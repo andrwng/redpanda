@@ -12,6 +12,7 @@
 #pragma once
 #include "cluster/cluster_utils.h"
 #include "cluster/controller.h"
+#include "cluster/logger.h"
 #include "cluster/members_table.h"
 #include "cluster/metadata_cache.h"
 #include "cluster/partition_leaders_table.h"
@@ -47,6 +48,8 @@
 
 #include <filesystem>
 
+using configure_node_id = ss::bool_class<struct configure_node_id_tag>;
+
 class redpanda_thread_fixture {
 public:
     static constexpr const char* rack_name = "i-am-rack";
@@ -61,27 +64,34 @@ public:
       std::vector<config::seed_server> seed_servers,
       ss::sstring base_dir,
       std::optional<scheduling_groups> sch_groups,
-      bool remove_on_shutdown)
+      bool remove_on_shutdown,
+      configure_node_id use_node_id = configure_node_id::yes)
       : app(ssx::sformat("redpanda-{}", node_id()))
       , proxy_port(proxy_port)
       , schema_reg_port(schema_reg_port)
       , data_dir(std::move(base_dir))
       , remove_on_shutdown(remove_on_shutdown)
       , app_signal(std::make_unique<::stop_signal>()) {
+        cluster::clusterlog.info("AWONG configuring");
         configure(
           node_id,
           kafka_port,
           rpc_port,
           coproc_supervisor_port,
-          std::move(seed_servers));
+          std::move(seed_servers),
+          use_node_id);
+        cluster::clusterlog.info("AWONG initializing");
         app.initialize(
           proxy_config(proxy_port),
           proxy_client_config(kafka_port),
           schema_reg_config(schema_reg_port),
           proxy_client_config(kafka_port),
           sch_groups);
+        cluster::clusterlog.info("AWONG checking env");
         app.check_environment();
+        cluster::clusterlog.info("AWONG configuring admin server");
         app.configure_admin_server();
+        cluster::clusterlog.info("AWONG starting");
         app.start(*app_signal);
 
         // used by request context builder
@@ -156,14 +166,16 @@ public:
       int32_t kafka_port,
       int32_t rpc_port,
       int32_t coproc_supervisor_port,
-      std::vector<config::seed_server> seed_servers) {
+      std::vector<config::seed_server> seed_servers,
+      configure_node_id use_node_id) {
         auto base_path = std::filesystem::path(data_dir);
         ss::smp::invoke_on_all([node_id,
                                 kafka_port,
                                 rpc_port,
                                 coproc_supervisor_port,
                                 seed_servers = std::move(seed_servers),
-                                base_path]() mutable {
+                                base_path,
+                                use_node_id]() mutable {
             auto& config = config::shard_local_cfg();
 
             config.get("enable_pid_file").set_value(false);
@@ -176,9 +188,11 @@ public:
             node_config.get("admin").set_value(
               std::vector<model::broker_endpoint>());
             node_config.get("developer_mode").set_value(true);
-            node_config.get("node_id").set_value(node_id);
+            node_config.get("node_id").set_value(
+              use_node_id ? std::make_optional(node_id)
+                          : std::optional<model::node_id>(std::nullopt));
             node_config.get("rack").set_value(
-              std::optional<model::rack_id>(model::rack_id(rack_name)));
+              std::make_optional(model::rack_id(rack_name)));
             node_config.get("seed_servers").set_value(seed_servers);
             node_config.get("rpc_server")
               .set_value(net::unresolved_address("127.0.0.1", rpc_port));

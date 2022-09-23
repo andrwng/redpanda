@@ -11,6 +11,7 @@
 
 #pragma once
 #include "cluster/fwd.h"
+#include "cluster/logger.h"
 #include "cluster/tests/utils.h"
 #include "config/seed_server.h"
 #include "model/metadata.h"
@@ -72,7 +73,9 @@ public:
       int16_t proxy_port,
       int16_t schema_reg_port,
       int16_t coproc_supervisor_port,
-      std::vector<config::seed_server> seeds) {
+      std::vector<config::seed_server> seeds,
+      configure_node_id use_node_id = configure_node_id::yes) {
+        cluster::clusterlog.info("AWONG emplacing");
         _instances.emplace(
           node_id,
           std::make_unique<redpanda_thread_fixture>(
@@ -85,7 +88,8 @@ public:
             seeds,
             ssx::sformat("{}.{}", _base_dir, node_id()),
             _sgroups,
-            false));
+            false,
+            use_node_id));
     }
 
     application* get_node_application(model::node_id id) {
@@ -107,25 +111,35 @@ public:
 
     application* create_node_application(
       model::node_id node_id,
-      int kafka_port = 9092,
-      int rpc_port = 11000,
-      int proxy_port = 8082,
-      int schema_reg_port = 8081,
-      int coproc_supervisor_port = 43189) {
+      int kafka_port_base = 9092,
+      int rpc_port_base = 11000,
+      int proxy_port_base = 8082,
+      int schema_reg_port_base = 8081,
+      int coproc_supervisor_port_base = 43189,
+      configure_node_id use_node_id = configure_node_id::yes) {
+        cluster::clusterlog.info("AWONG creating");
         std::vector<config::seed_server> seeds = {};
         if (node_id != 0) {
             seeds.push_back(
               {.addr = net::unresolved_address("127.0.0.1", 11000)});
         }
+        cluster::clusterlog.info("AWONG adding");
         add_node(
           node_id,
-          kafka_port + node_id(),
-          rpc_port + node_id(),
-          proxy_port + node_id(),
-          schema_reg_port + node_id(),
-          coproc_supervisor_port + node_id(),
-          std::move(seeds));
+          kafka_port_base + node_id(),
+          rpc_port_base + node_id(),
+          proxy_port_base + node_id(),
+          schema_reg_port_base + node_id(),
+          coproc_supervisor_port_base + node_id(),
+          std::move(seeds),
+          use_node_id);
         return get_node_application(node_id);
+    }
+
+    application* create_node_application(
+      model::node_id node_id, configure_node_id use_node_id) {
+        return create_node_application(
+          node_id, 9092, 11000, 8082, 8081, 43189, use_node_id);
     }
 
     void remove_node_application(model::node_id node_id) {

@@ -33,9 +33,9 @@ cluster_discovery::cluster_discovery(
 
 ss::future<node_id> cluster_discovery::determine_node_id() {
     const auto& configured_node_id = _node_config.node_id();
-    if (configured_node_id == -1) {
-        clusterlog.info("Using configured node ID {}", configured_node_id);
-        co_return configured_node_id;
+    if (configured_node_id != std::nullopt) {
+        clusterlog.info("Using configured node ID {}", *configured_node_id);
+        co_return *configured_node_id;
     }
     // TODO: once is_cluster_founder() refers to all seeds, verify that all the
     // seeds' seed_servers lists match and assign node IDs based on the
