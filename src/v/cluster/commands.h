@@ -11,6 +11,7 @@
 
 #pragma once
 #include "bytes/iobuf_parser.h"
+#include "cluster/logger.h"
 #include "cluster/simple_batch_builder.h"
 #include "cluster/types.h"
 #include "model/metadata.h"

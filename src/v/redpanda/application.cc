@@ -1553,7 +1553,7 @@ void application::start_kafka(::stop_signal& app_signal) {
     vlog(_log.info, "Waiting for cluster membership");
     controller->get_members_table()
       .local()
-      .await_membership(config::node().node_id(), app_signal.abort_source())
+      .await_membership(*config::node().node_id(), app_signal.abort_source())
       .get();
     _kafka_server.invoke_on_all(&net::server::start).get();
     vlog(
