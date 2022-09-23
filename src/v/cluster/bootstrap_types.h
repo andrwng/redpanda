@@ -8,6 +8,7 @@
 // by the Apache License, Version 2.0
 #pragma once
 
+#include "model/fundamental.h"
 #include "serde/serde.h"
 
 #include <fmt/core.h>
@@ -33,7 +34,7 @@ struct get_node_uuid_reply
   : serde::envelope<get_node_uuid_reply, serde::version<0>> {
     using rpc_adl_exempt = std::true_type;
 
-    std::vector<uint8_t> node_uuid;
+    model::node_uuid node_uuid;
 
     auto serde_fields() { return std::tie(node_uuid); }
 

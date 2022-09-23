@@ -16,7 +16,7 @@ namespace cluster {
 
 ss::future<get_node_uuid_reply> bootstrap_service::get_node_uuid(
   get_node_uuid_request&&, rpc::streaming_context&) {
-    get_node_uuid_reply r;
+    get_node_uuid_reply r{};
     r.node_uuid = _storage.local().node_uuid();
     co_return r;
 }
