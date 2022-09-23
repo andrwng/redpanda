@@ -34,6 +34,13 @@ public:
         }
     }
 
+    void merge_services_from(std::unique_ptr<simple_protocol> other) {
+        std::move(
+          other->_services.begin(),
+          other->_services.end(),
+          std::back_inserter(_services));
+    }
+
 private:
     ss::future<> dispatch_method_once(header, net::server::resources);
 
