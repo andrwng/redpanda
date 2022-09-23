@@ -1,0 +1,15 @@
+{
+    "namespace": "cluster",
+    "service_name": "cluster_bootstrap",
+    "includes": [
+        "cluster/bootstrap_types.h"
+    ],
+    "methods": [
+        {
+            "name": "get_node_uuid",
+            "input_type": "get_node_uuid_request",
+            "output_type": "get_node_uuid_reply"
+        }
+    ]
+}
+
