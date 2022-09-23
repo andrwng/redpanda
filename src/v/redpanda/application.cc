@@ -1231,6 +1231,40 @@ void application::start_local_storage() {
 
     storage.invoke_on_all(&storage::api::start).get();
 
+    // Load the local node UUID, or create one if none exists.
+    auto& kvs = storage.local().kvs();
+    static const bytes node_uuid_key = "node_uuid";
+    std::vector<uint8_t> node_uuid;
+    auto node_uuid_buf = kvs.get(
+      storage::kvstore::key_space::controller, node_uuid_key);
+    if (node_uuid_buf) {
+        node_uuid = serde::from_iobuf<std::vector<uint8_t>>(
+          std::move(*node_uuid_buf));
+        vlog(
+          _log.info,
+          "Loaded existing UUID for node: {}",
+          model::node_uuid(node_uuid));
+    } else {
+        boost::uuids::random_generator uuid_gen;
+        auto uuid = uuid_gen();
+        node_uuid.resize(model::node_uuid::length);
+        std::move(uuid.begin(), uuid.end(), node_uuid.begin());
+        vlog(
+          _log.info,
+          "Generated new UUID for node: {}",
+          model::node_uuid(node_uuid));
+        kvs
+          .put(
+            storage::kvstore::key_space::controller,
+            node_uuid_key,
+            serde::to_iobuf(node_uuid))
+          .get();
+    }
+    storage
+      .invoke_on_all([node_uuid](storage::api& storage) mutable {
+          storage.set_node_uuid(std::move(node_uuid));
+      })
+      .get();
 }
 
 void application::wire_up_internal_rpc_layer() {
