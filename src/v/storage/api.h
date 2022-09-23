@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "model/fundamental.h"
 #include "seastarx.h"
 #include "storage/kvstore.h"
 #include "storage/log_manager.h"
@@ -75,6 +76,12 @@ public:
         return f;
     }
 
+    void set_node_uuid(const model::node_uuid& node_uuid) {
+        _node_uuid = node_uuid;
+    }
+
+    model::node_uuid node_uuid() const { return _node_uuid; }
+
     kvstore& kvs() { return *_kvstore; }
     log_manager& log_mgr() { return *_log_mgr; }
     storage_resources& resources() { return _resources; }
@@ -87,6 +94,8 @@ private:
 
     std::unique_ptr<kvstore> _kvstore;
     std::unique_ptr<log_manager> _log_mgr;
+
+    model::node_uuid _node_uuid;
 };
 
 } // namespace storage
