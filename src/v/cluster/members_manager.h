@@ -12,6 +12,7 @@
 #pragma once
 
 #include "cluster/commands.h"
+#include "cluster/controller_stm.h"
 #include "cluster/fwd.h"
 #include "cluster/types.h"
 #include "config/seed_server.h"
@@ -25,6 +26,8 @@
 #include "storage/fwd.h"
 
 namespace cluster {
+
+class feature_table;
 
 // Implementation of a raft::mux_state_machine that is responsible for
 // updating information about cluster members, joining the cluster, updating
@@ -45,7 +48,8 @@ public:
       decommission_node_cmd,
       recommission_node_cmd,
       finish_reallocations_cmd,
-      maintenance_mode_cmd>{};
+      maintenance_mode_cmd,
+      register_node_uuid_cmd>{};
     static constexpr ss::shard_id shard = 0;
     static constexpr size_t max_updates_queue_size = 100;
 
@@ -85,6 +89,8 @@ public:
 
     members_manager(
       consensus_ptr,
+      ss::sharded<controller_stm>&,
+      ss::sharded<feature_table>&,
       ss::sharded<members_table>&,
       ss::sharded<rpc::connection_cache>&,
       ss::sharded<partition_allocator>&,
@@ -140,13 +146,20 @@ public:
     // concurrently from multiple fibers.
     ss::future<std::vector<node_update>> get_node_updates();
 
+    model::node_id get_node_id(const model::node_uuid&);
+
 private:
+    using map_t = absl::flat_hash_map<model::node_uuid, model::node_id>;
     using seed_iterator = std::vector<config::seed_server>::const_iterator;
     // Cluster join
     void join_raft0();
     bool is_already_member() const;
 
     ss::future<> initialize_broker_connection(const model::broker&);
+
+    // Returns the node ID for a given node UUID, assigning one if one does not
+    // already exist.
+    model::node_id get_or_assign_node_id(const model::node_uuid&);
 
     ss::future<result<join_node_reply>> dispatch_join_to_seed_server(
       seed_iterator it, join_node_request const& req);
@@ -178,7 +191,11 @@ private:
     simple_time_jitter<model::timeout_clock> _join_retry_jitter;
     const std::chrono::milliseconds _join_timeout;
     const consensus_ptr _raft0;
+
+    ss::sharded<controller_stm>& _controller_stm;
+    ss::sharded<feature_table>& _feature_table;
     ss::sharded<members_table>& _members_table;
+
     ss::sharded<rpc::connection_cache>& _connection_cache;
 
     // Partition allocator to update when receiving node lifecycle commands.
@@ -208,6 +225,10 @@ private:
     // Cluster membership updates that have yet to be released via the call to
     // get_node_updates().
     ss::queue<node_update> _update_queue;
+
+    map_t _uuid_by_id;
+
+    model::node_id _next_assigned_id;
 
     // Subscription to _as with which to signal an abort to _update_queue.
     ss::abort_source::subscription _queue_abort_subscription;

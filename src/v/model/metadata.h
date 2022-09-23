@@ -15,13 +15,18 @@
 #include "net/unresolved_address.h"
 #include "seastarx.h"
 #include "serde/envelope.h"
+#include "utils/base64.h"
 #include "utils/named_type.h"
+#include "utils/uuid.h"
 
 #include <seastar/core/sstring.hh>
 
 #include <absl/hash/hash.h>
 #include <bits/stdint-intn.h>
 #include <boost/functional/hash.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_io.hpp>
+#include <fmt/core.h>
 
 #include <compare>
 #include <optional>
@@ -32,6 +37,8 @@
 
 namespace model {
 using node_id = named_type<int32_t, struct node_id_model_type>;
+using node_uuid = uuid_t;
+
 /**
  * We use revision_id to identify entities evolution in time. f.e. NTP that was
  * first created and then removed, raft configuration

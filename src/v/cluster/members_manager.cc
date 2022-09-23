@@ -12,6 +12,7 @@
 #include "cluster/cluster_utils.h"
 #include "cluster/commands.h"
 #include "cluster/controller_service.h"
+#include "cluster/controller_stm.h"
 #include "cluster/drain_manager.h"
 #include "cluster/fwd.h"
 #include "cluster/logger.h"
@@ -25,6 +26,7 @@
 #include "random/generators.h"
 #include "redpanda/application.h"
 #include "reflection/adl.h"
+#include "seastarx.h"
 #include "storage/api.h"
 
 #include <seastar/core/coroutine.hh>
@@ -42,6 +44,8 @@ namespace cluster {
 
 members_manager::members_manager(
   consensus_ptr raft0,
+  ss::sharded<controller_stm>& controller_stm,
+  ss::sharded<feature_table>& feature_table,
   ss::sharded<members_table>& members_table,
   ss::sharded<rpc::connection_cache>& connections,
   ss::sharded<partition_allocator>& allocator,
@@ -53,6 +57,8 @@ members_manager::members_manager(
   , _join_retry_jitter(config::shard_local_cfg().join_retry_timeout_ms())
   , _join_timeout(std::chrono::seconds(2))
   , _raft0(raft0)
+  , _controller_stm(controller_stm)
+  , _feature_table(feature_table)
   , _members_table(members_table)
   , _connection_cache(connections)
   , _allocator(allocator)
@@ -60,7 +66,8 @@ members_manager::members_manager(
   , _drain_manager(drain_manager)
   , _as(as)
   , _rpc_tls_config(config::node().rpc_server_tls())
-  , _update_queue(max_updates_queue_size) {
+  , _update_queue(max_updates_queue_size)
+  , _next_assigned_id(model::node_id(1)) {
     auto sub = _as.local().subscribe([this]() noexcept {
         _update_queue.abort(
           std::make_exception_ptr(ss::abort_requested_exception{}));
@@ -201,7 +208,9 @@ ss::future<> members_manager::handle_raft0_cfg_update(
 
 ss::future<std::error_code>
 members_manager::apply_update(model::record_batch b) {
+    vlog(clusterlog.info, "Applying update to members_manager");
     if (b.header().type == model::record_batch_type::raft_configuration) {
+        vlog(clusterlog.info, "Raft config update");
         co_return co_await apply_raft_configuration_batch(std::move(b));
     }
 
@@ -269,6 +278,17 @@ members_manager::apply_update(model::record_batch b) {
                 }
                 return f.then([error] { return error; });
             });
+      },
+      [this](register_node_uuid_cmd cmd) {
+          const auto& node_uuid = cmd.key;
+          vlog(
+            clusterlog.info,
+            "Applying register_node_uuid_cmd for UUID {}",
+            node_uuid);
+          auto node_id = get_or_assign_node_id(node_uuid);
+          vlog(
+            clusterlog.info, "Node UUID {} has node ID {}", node_uuid, node_id);
+          return ss::make_ready_future<std::error_code>(errc::success);
       });
 }
 ss::future<std::error_code>
@@ -301,6 +321,14 @@ members_manager::get_node_updates() {
     }
 
     return ss::make_ready_future<std::vector<node_update>>(std::move(ret));
+}
+
+model::node_id members_manager::get_node_id(const model::node_uuid& node_uuid) {
+    const auto it = _uuid_by_id.find(node_uuid);
+    vassert(
+      it != _uuid_by_id.end(),
+      "Node registration must be completed before calling");
+    return it->second;
 }
 
 template<typename Cmd>
@@ -421,6 +449,25 @@ void members_manager::join_raft0() {
     });
 }
 
+model::node_id
+members_manager::get_or_assign_node_id(const model::node_uuid& node_uuid) {
+    // XXX: catch overflows
+    const auto it = _uuid_by_id.find(node_uuid);
+    if (it == _uuid_by_id.end()) {
+        while (_members_table.local().contains(_next_assigned_id)) {
+            ++_next_assigned_id;
+        }
+        _uuid_by_id.emplace(node_uuid, _next_assigned_id);
+        vlog(
+          clusterlog.info,
+          "Assigned node UUID {} a node ID {}",
+          node_uuid,
+          _next_assigned_id);
+        return _next_assigned_id++;
+    }
+    return it->second;
+}
+
 ss::future<result<join_node_reply>>
 members_manager::dispatch_join_to_seed_server(
   seed_iterator it, join_node_request const& req) {
@@ -491,14 +538,67 @@ auto members_manager::dispatch_rpc_to_leader(
 ss::future<result<join_node_reply>>
 members_manager::handle_join_request(join_node_request const req) {
     using ret_t = result<join_node_reply>;
+    model::node_uuid node_uuid;
+    ss::sstring node_uuid_str
+      = req.node_uuid.size() == model::node_uuid::length
+          ? ssx::sformat("{}", model::node_uuid(node_uuid))
+          : ssx::sformat("no uuid (size {})", req.node_uuid.size());
+    if (req.node_uuid.size() == model::node_uuid::length) {
+        node_uuid = model::node_uuid(req.node_uuid);
+    }
     vlog(
       clusterlog.info,
-      "Processing node '{}' join request (version {})",
-      req.node.id(),
+      "Processing node '{} ({})' join request (version {})",
+      node_uuid_str,
+      node_uuid,
       req.logical_version);
 
     // curent node is a leader
     if (_raft0->is_elected_leader()) {
+        // The request has no node ID. This is a registration attempt.
+        if (req.node.id() < 0) {
+            if (req.node_uuid.size() != 16) {
+                vlog(
+                  clusterlog.warn,
+                  "Node registration attempt had no node UUID");
+                co_return errc::invalid_request;
+            }
+            // If already in the member's table, return what's in the member's
+            // table.
+            const auto it = _uuid_by_id.find(node_uuid);
+            if (it != _uuid_by_id.end()) {
+                vlog(
+                  clusterlog.info,
+                  "Node UUID {} already registered as '{}'",
+                  req.node_uuid,
+                  req.node.id());
+
+                co_return ret_t(join_node_reply{true, it->second});
+            }
+
+            vlog(
+              clusterlog.info,
+              "Replicating registration of UUID {}",
+              node_uuid);
+            // Otherwise, replicate a request to register the UUID.
+            auto errc = co_await replicate_and_wait(
+              _controller_stm,
+              _feature_table,
+              _as,
+              register_node_uuid_cmd(node_uuid, 0),
+              model::timeout_clock::now() + 30s);
+            vlog(
+              clusterlog.info,
+              "Registration replication completed for UUID '{}': {}",
+              node_uuid,
+              errc);
+            if (errc != errc::success) {
+                co_return ret_t(join_node_reply{false, model::node_id(-1)});
+            }
+
+            // On success, return the node ID.
+            co_return ret_t(join_node_reply{true, get_node_id(node_uuid)});
+        }
         // if configuration contains the broker already just update its config
         // with data from join request
 
