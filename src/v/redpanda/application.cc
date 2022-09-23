@@ -16,11 +16,14 @@
 #include "cloud_storage/cache_service.h"
 #include "cloud_storage/partition_recovery_manager.h"
 #include "cloud_storage/remote.h"
+#include "cluster/bootstrap_service.h"
+#include "cluster/cluster_discovery.h"
 #include "cluster/cluster_utils.h"
 #include "cluster/controller.h"
 #include "cluster/fwd.h"
 #include "cluster/id_allocator.h"
 #include "cluster/id_allocator_frontend.h"
+#include "cluster/members_manager.h"
 #include "cluster/members_table.h"
 #include "cluster/metadata_dissemination_handler.h"
 #include "cluster/metadata_dissemination_service.h"
@@ -61,6 +64,7 @@
 #include "redpanda/admin_server.h"
 #include "resource_mgmt/io_priority.h"
 #include "rpc/simple_protocol.h"
+#include "serde/serde.h"
 #include "storage/backlog_controller.h"
 #include "storage/chunk_cache.h"
 #include "storage/compaction_controller.h"
@@ -83,6 +87,8 @@
 #include <seastar/util/conversions.hh>
 #include <seastar/util/defer.hh>
 
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
 #include <sys/resource.h>
 #include <sys/utsname.h>
 
@@ -301,7 +307,6 @@ int application::run(int ac, char** av) {
                 initialize();
                 check_environment();
                 setup_metrics();
-                wire_up_services();
                 configure_admin_server();
                 start(app_signal);
                 app_signal.wait().get();
@@ -712,8 +717,8 @@ make_upload_controller_config(ss::scheduling_group sg) {
 }
 
 // add additional services in here
-void application::wire_up_services() {
-    wire_up_redpanda_services();
+void application::wire_up_services(model::node_id node_id) {
+    wire_up_redpanda_services(node_id);
     if (_proxy_config) {
         construct_service(
           _proxy_client,
@@ -732,7 +737,7 @@ void application::wire_up_services() {
     if (_schema_reg_config) {
         construct_single_service(
           _schema_registry,
-          config::node().node_id(),
+          node_id,
           smp_service_groups.proxy_smp_sg(),
           // TODO: Improve memory budget for services
           // https://github.com/redpanda-data/redpanda/issues/1392
@@ -743,30 +748,12 @@ void application::wire_up_services() {
     }
 }
 
-void application::wire_up_redpanda_services() {
-    ss::smp::invoke_on_all([] {
-        return storage::internal::chunks().start();
-    }).get();
-
+void application::wire_up_redpanda_services(model::node_id node_id) {
     // cluster
-    syschecks::systemd_message("Adding raft client cache").get();
+    syschecks::systemd_message("Initializing connection cache").get();
     construct_service(_connection_cache).get();
     syschecks::systemd_message("Building shard-lookup tables").get();
     construct_service(shard_table).get();
-
-    syschecks::systemd_message("Intializing storage services").get();
-    construct_single_service_sharded(storage_node).get();
-
-    construct_service(
-      storage,
-      []() { return kvstore_config_from_global_config(); },
-      [this]() {
-          auto log_cfg = manager_config_from_global_config(_scheduling_groups);
-          log_cfg.reclaim_opts.background_reclaimer_sg
-            = _scheduling_groups.cache_background_reclaim_sg();
-          return log_cfg;
-      })
-      .get();
 
     syschecks::systemd_message("Intializing raft recovery throttle").get();
     recovery_throttle
@@ -778,7 +765,7 @@ void application::wire_up_redpanda_services() {
     syschecks::systemd_message("Intializing raft group manager").get();
     raft_group_manager
       .start(
-        model::node_id(config::node().node_id()),
+        node_id,
         config::shard_local_cfg().raft_io_timeout_ms(),
         _scheduling_groups.raft_sg(),
         config::shard_local_cfg().raft_heartbeat_interval_ms(),
@@ -999,56 +986,6 @@ void application::wire_up_redpanda_services() {
         coprocessing->start().get();
     }
 
-    // rpc
-    ss::sharded<net::server_configuration> rpc_cfg;
-    rpc_cfg.start(ss::sstring("internal_rpc")).get();
-    rpc_cfg
-      .invoke_on_all([this](net::server_configuration& c) {
-          return ss::async([this, &c] {
-              auto rpc_server_addr
-                = net::resolve_dns(config::node().rpc_server()).get0();
-              c.load_balancing_algo
-                = ss::server_socket::load_balancing_algorithm::port;
-              c.max_service_memory_per_core = memory_groups::rpc_total_memory();
-              c.disable_metrics = net::metrics_disabled(
-                config::shard_local_cfg().disable_metrics());
-              c.disable_public_metrics = net::public_metrics_disabled(
-                config::shard_local_cfg().disable_public_metrics());
-              c.listen_backlog
-                = config::shard_local_cfg().rpc_server_listen_backlog;
-              c.tcp_recv_buf
-                = config::shard_local_cfg().rpc_server_tcp_recv_buf;
-              c.tcp_send_buf
-                = config::shard_local_cfg().rpc_server_tcp_send_buf;
-              auto rpc_builder = config::node()
-                                   .rpc_server_tls()
-                                   .get_credentials_builder()
-                                   .get0();
-              auto credentials
-                = rpc_builder
-                    ? rpc_builder
-                        ->build_reloadable_server_credentials(
-                          [this](
-                            const std::unordered_set<ss::sstring>& updated,
-                            const std::exception_ptr& eptr) {
-                              cluster::log_certificate_reload_event(
-                                _log, "Internal RPC TLS", updated, eptr);
-                          })
-                        .get0()
-                    : nullptr;
-              c.addrs.emplace_back(rpc_server_addr, credentials);
-          });
-      })
-      .get();
-    /**
-     * Use port based load_balancing_algorithm to make connection shard
-     * assignment deterministic.
-     **/
-    syschecks::systemd_message("Starting internal RPC {}", rpc_cfg.local())
-      .get();
-    _rpc.start(&rpc_cfg).get();
-    rpc_cfg.stop().get();
-
     syschecks::systemd_message("Creating id allocator frontend").get();
     construct_service(
       id_allocator_frontend,
@@ -1243,36 +1180,23 @@ application::set_proxy_client_config(ss::sstring name, std::any val) {
       });
 }
 
-void application::start(::stop_signal& app_signal) {
-    wire_up_services();
-    start_redpanda(app_signal);
-
-    if (_proxy_config) {
-        _proxy.invoke_on_all(&pandaproxy::rest::proxy::start).get();
-        vlog(
-          _log.info,
-          "Started Pandaproxy listening at {}",
-          _proxy_config->pandaproxy_api());
-    }
-
-    if (_schema_reg_config) {
-        _schema_registry->start().get();
-        vlog(
-          _log.info,
-          "Started Schema Registry listening at {}",
-          _schema_reg_config->schema_registry_api());
-    }
-
-    start_kafka(app_signal);
-
-    _admin.invoke_on_all([](admin_server& admin) { admin.set_ready(); }).get();
-
-    vlog(_log.info, "Successfully started Redpanda!");
-    syschecks::systemd_notify_ready().get();
-}
-
-void application::start_redpanda(::stop_signal& app_signal) {
-    syschecks::systemd_message("Staring storage services").get();
+void application::start_local_storage() {
+    ss::smp::invoke_on_all([] {
+        return storage::internal::chunks().start();
+    }).get();
+    syschecks::systemd_message("Intializing storage services").get();
+    construct_single_service_sharded(storage_node).get();
+    construct_service(
+      storage,
+      []() { return kvstore_config_from_global_config(); },
+      [this]() {
+          auto log_cfg = manager_config_from_global_config(_scheduling_groups);
+          log_cfg.reclaim_opts.background_reclaimer_sg
+            = _scheduling_groups.cache_background_reclaim_sg();
+          return log_cfg;
+      })
+      .get();
+    syschecks::systemd_message("Starting storage services").get();
 
     // single instance
     storage_node.invoke_on_all(&storage::node_api::start).get0();
@@ -1307,6 +1231,123 @@ void application::start_redpanda(::stop_signal& app_signal) {
 
     storage.invoke_on_all(&storage::api::start).get();
 
+}
+
+void application::wire_up_internal_rpc_layer() {
+    ss::sharded<net::server_configuration> rpc_cfg;
+    rpc_cfg.start(ss::sstring("internal_rpc")).get();
+    rpc_cfg
+      .invoke_on_all([this](net::server_configuration& c) {
+          return ss::async([this, &c] {
+              auto rpc_server_addr
+                = net::resolve_dns(config::node().rpc_server()).get0();
+              c.load_balancing_algo
+                = ss::server_socket::load_balancing_algorithm::port;
+              c.max_service_memory_per_core = memory_groups::rpc_total_memory();
+              c.disable_metrics = net::metrics_disabled(
+                config::shard_local_cfg().disable_metrics());
+              c.disable_public_metrics = net::public_metrics_disabled(
+                config::shard_local_cfg().disable_public_metrics());
+              c.listen_backlog
+                = config::shard_local_cfg().rpc_server_listen_backlog;
+              c.tcp_recv_buf
+                = config::shard_local_cfg().rpc_server_tcp_recv_buf;
+              c.tcp_send_buf
+                = config::shard_local_cfg().rpc_server_tcp_send_buf;
+              auto rpc_builder = config::node()
+                                   .rpc_server_tls()
+                                   .get_credentials_builder()
+                                   .get0();
+              auto credentials
+                = rpc_builder
+                    ? rpc_builder
+                        ->build_reloadable_server_credentials(
+                          [this](
+                            const std::unordered_set<ss::sstring>& updated,
+                            const std::exception_ptr& eptr) {
+                              cluster::log_certificate_reload_event(
+                                _log, "Internal RPC TLS", updated, eptr);
+                          })
+                        .get0()
+                    : nullptr;
+              c.addrs.emplace_back(rpc_server_addr, credentials);
+          });
+      })
+      .get();
+
+    // Use port based load_balancing_algorithm to make connection shard
+    // assignment deterministic.
+    syschecks::systemd_message("Starting internal RPC {}", rpc_cfg.local())
+      .get();
+    _rpc.start(&rpc_cfg).get();
+    rpc_cfg.stop().get();
+}
+
+void application::start(::stop_signal& app_signal) {
+    start_local_storage();
+    wire_up_internal_rpc_layer();
+    _rpc
+      .invoke_on_all([this](net::server& s) {
+          auto proto = std::make_unique<rpc::simple_protocol>();
+          proto->register_service<cluster::bootstrap_service>(
+            _scheduling_groups.cluster_sg(),
+            smp_service_groups.cluster_smp_sg(),
+            storage);
+          if (!config::shard_local_cfg().disable_metrics()) {
+              proto->setup_metrics();
+          }
+          s.set_protocol(std::move(proto));
+      })
+      .get();
+    _rpc.invoke_on_all(&net::server::start).get();
+    // shutdown input on RPC server
+    _deferred.emplace_back(
+      [this] { _rpc.invoke_on_all(&net::server::shutdown_input).get(); });
+    vlog(
+      _log.info,
+      "Started RPC server listening at {}",
+      config::node().rpc_server());
+
+    const auto& node_uuid = storage.local().node_uuid();
+    cluster::cluster_discovery cd(
+      config::node(), node_uuid, storage.local().kvs());
+    auto node_id = cd.determine_node_id().get();
+    if (config::node().node_id() == std::nullopt) {
+        ss::smp::invoke_on_all([node_id] {
+            config::node().node_id.set_value(std::make_optional(node_id));
+        }).get0();
+    }
+
+    vlog(_log.info, "Starting Redpanda with node_id {}", node_id);
+
+    wire_up_services(node_id);
+    start_redpanda(app_signal);
+
+    if (_proxy_config) {
+        _proxy.invoke_on_all(&pandaproxy::rest::proxy::start).get();
+        vlog(
+          _log.info,
+          "Started Pandaproxy listening at {}",
+          _proxy_config->pandaproxy_api());
+    }
+
+    if (_schema_reg_config) {
+        _schema_registry->start().get();
+        vlog(
+          _log.info,
+          "Started Schema Registry listening at {}",
+          _schema_reg_config->schema_registry_api());
+    }
+
+    start_kafka(app_signal);
+
+    _admin.invoke_on_all([](admin_server& admin) { admin.set_ready(); }).get();
+
+    vlog(_log.info, "Successfully started Redpanda!");
+    syschecks::systemd_notify_ready().get();
+}
+
+void application::start_redpanda(::stop_signal& app_signal) {
     syschecks::systemd_message("Starting the partition manager").get();
     partition_manager.invoke_on_all(&cluster::partition_manager::start).get();
 
@@ -1336,6 +1377,10 @@ void application::start_redpanda(::stop_signal& app_signal) {
     _rpc
       .invoke_on_all([this](net::server& s) {
           auto proto = std::make_unique<rpc::simple_protocol>();
+          proto->register_service<cluster::bootstrap_service>(
+            _scheduling_groups.cluster_sg(),
+            smp_service_groups.cluster_smp_sg(),
+            storage);
           proto->register_service<cluster::id_allocator>(
             _scheduling_groups.raft_sg(),
             smp_service_groups.raft_smp_sg(),
@@ -1385,14 +1430,11 @@ void application::start_redpanda(::stop_signal& app_signal) {
               proto->setup_metrics();
           }
 
-          s.set_protocol(std::move(proto));
+          // Register the services on the existing server.
+          reinterpret_cast<rpc::simple_protocol*>(s.get_protocol())
+            ->merge_services_from(std::move(proto));
       })
       .get();
-    _rpc.invoke_on_all(&net::server::start).get();
-    vlog(
-      _log.info,
-      "Started RPC server listening at {}",
-      config::node().rpc_server());
 
     // After we have started internal RPC listener, we may join
     // the cluster (if we aren't already a member)
@@ -1480,7 +1522,7 @@ void application::start_kafka(::stop_signal& app_signal) {
     vlog(_log.info, "Waiting for cluster membership");
     controller->get_members_table()
       .local()
-      .await_membership(config::node().node_id(), app_signal.abort_source())
+      .await_membership(*config::node().node_id(), app_signal.abort_source())
       .get();
     _kafka_server.invoke_on_all(&net::server::start).get();
     vlog(

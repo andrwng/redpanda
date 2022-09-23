@@ -109,8 +109,10 @@ private:
     using deferred_actions
       = std::vector<ss::deferred_action<std::function<void()>>>;
 
-    void wire_up_services();
-    void wire_up_redpanda_services();
+    void wire_up_internal_rpc_layer();
+    void wire_up_services(model::node_id);
+    void wire_up_redpanda_services(model::node_id);
+    void start_local_storage();
     void start_redpanda(::stop_signal&);
     void start_kafka(::stop_signal&);
 
