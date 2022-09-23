@@ -1353,6 +1353,9 @@ void application::wire_up_and_start(::stop_signal& app_signal) {
     const auto& node_uuid = storage.local().node_uuid();
     cluster::cluster_discovery cd(config::node(), node_uuid);
     auto node_id = cd.determine_node_id().get();
+    if (config::node().node_id() != model::node_id(-1)) {
+        config::node().node_id.set_value(std::make_optional<model::node_id>(node_id));
+    }
 
     vlog(_log.info, "Starting Redpanda with node_id {}", node_id);
 
