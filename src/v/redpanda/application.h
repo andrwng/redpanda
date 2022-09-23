@@ -33,6 +33,7 @@
 #include "resource_mgmt/scheduling_groups_probe.h"
 #include "resource_mgmt/smp_groups.h"
 #include "rpc/fwd.h"
+#include "rpc/rpc_server.h"
 #include "seastarx.h"
 #include "ssx/metrics.h"
 #include "storage/fwd.h"
@@ -108,10 +109,20 @@ private:
     using deferred_actions
       = std::vector<ss::deferred_action<std::function<void()>>>;
 
+    // Constructs services across shards required to get bootstrap metadata.
+    void wire_up_bootstrap_services();
+
+    // Starts services across shards required to get bootstrap metadata.
+    void start_bootstrap_services();
+
+    // Constructs services across shards meant for Redpanda runtime.
+    void wire_up_runtime_services(model::node_id node_id);
     void configure_admin_server();
-    void wire_up_services();
-    void wire_up_redpanda_services();
-    void start_redpanda(::stop_signal&);
+    void wire_up_redpanda_services(model::node_id);
+
+    // Starts the services meant for Redpanda runtime. Must be called after
+    // having constructed the subsystems via the corresponding `wire_up` calls.
+    void start_runtime_services(::stop_signal&);
     void start_kafka(::stop_signal&);
 
     // All methods are calleds from Seastar thread
@@ -168,7 +179,7 @@ private:
     ss::sharded<features::feature_table> _feature_table;
     ss::sharded<kafka::group_manager> _group_manager;
     ss::sharded<kafka::group_manager> _co_group_manager;
-    ss::sharded<net::server> _rpc;
+    ss::sharded<rpc::rpc_server> _rpc;
     ss::sharded<admin_server> _admin;
     ss::sharded<net::conn_quota> _kafka_conn_quotas;
     ss::sharded<net::server> _kafka_server;
