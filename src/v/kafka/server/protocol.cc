@@ -160,7 +160,7 @@ ss::future<security::tls::mtls_state> get_mtls_principal_state(
       });
 }
 
-ss::future<> protocol::apply(net::server::resources rs) {
+ss::future<> protocol::apply(net::server_resources rs) {
     const bool authz_enabled
       = config::shard_local_cfg().kafka_enable_authorization().value_or(
         config::shard_local_cfg().enable_sasl());

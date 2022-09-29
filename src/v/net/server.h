@@ -95,28 +95,10 @@ struct server_configuration {
     friend std::ostream& operator<<(std::ostream&, const server_configuration&);
 };
 
+class server_resources;
+
 class server {
 public:
-    // always guaranteed non-null
-    class resources final {
-    public:
-        resources(server* s, ss::lw_shared_ptr<net::connection> c)
-          : conn(std::move(c))
-          , _s(s) {}
-
-        // NOLINTNEXTLINE
-        ss::lw_shared_ptr<net::connection> conn;
-
-        server_probe& probe() { return _s->_probe; }
-        ssx::semaphore& memory() { return _s->_memory; }
-        hdr_hist& hist() { return _s->_hist; }
-        ss::gate& conn_gate() { return _s->_conn_gate; }
-        ss::abort_source& abort_source() { return _s->_as; }
-        bool abort_requested() const { return _s->_as.abort_requested(); }
-
-    private:
-        server* _s;
-    };
     struct protocol {
         protocol() noexcept = default;
         protocol(protocol&&) noexcept = default;
@@ -128,7 +110,7 @@ public:
         virtual const char* name() const = 0;
         // the lifetime of all references here are guaranteed to live
         // until the end of the server (container/parent)
-        virtual ss::future<> apply(server::resources) = 0;
+        virtual ss::future<> apply(server_resources) = 0;
     };
 
     explicit server(server_configuration);
@@ -175,7 +157,7 @@ private:
           , socket(std::move(socket)) {}
     };
 
-    friend resources;
+    friend server_resources;
     ss::future<> accept(listener&);
     void setup_metrics();
     void setup_public_metrics();
@@ -193,6 +175,27 @@ private:
 
     std::optional<config_connection_rate_bindings> connection_rate_bindings;
     std::optional<connection_rate<>> _connection_rates;
+};
+
+class server_resources final {
+public:
+    // always guaranteed non-null
+    server_resources(server* s, ss::lw_shared_ptr<net::connection> c)
+      : conn(std::move(c))
+      , _s(s) {}
+
+    // NOLINTNEXTLINE
+    ss::lw_shared_ptr<net::connection> conn;
+
+    server_probe& probe() { return _s->_probe; }
+    ssx::semaphore& memory() { return _s->_memory; }
+    hdr_hist& hist() { return _s->_hist; }
+    ss::gate& conn_gate() { return _s->_conn_gate; }
+    ss::abort_source& abort_source() { return _s->_as; }
+    bool abort_requested() const { return _s->_as.abort_requested(); }
+
+private:
+    server* _s;
 };
 
 } // namespace net

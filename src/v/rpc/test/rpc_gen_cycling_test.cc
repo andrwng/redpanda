@@ -664,7 +664,7 @@ public:
 
     const char* name() const final { return "redpanda erraneous proto"; };
 
-    ss::future<> apply(net::server::resources rs) final {
+    ss::future<> apply(net::server_resources rs) final {
         return ss::do_until(
           [rs] { return rs.conn->input().eof() || rs.abort_requested(); },
           [rs]() mutable {

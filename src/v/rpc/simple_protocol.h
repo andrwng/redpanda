@@ -30,7 +30,7 @@ public:
     const char* name() const final {
         return "vectorized internal rpc protocol";
     };
-    ss::future<> apply(net::server::resources) final;
+    ss::future<> apply(net::server_resources) final;
 
     void setup_metrics() {
         for (auto& s : _services) {
@@ -39,7 +39,7 @@ public:
     }
 
 private:
-    ss::future<> dispatch_method_once(header, net::server::resources);
+    ss::future<> dispatch_method_once(header, net::server_resources);
 
     std::vector<std::unique_ptr<service>> _services;
 };

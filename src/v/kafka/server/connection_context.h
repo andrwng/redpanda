@@ -86,7 +86,7 @@ class connection_context final
 public:
     connection_context(
       protocol& p,
-      net::server::resources&& r,
+      net::server_resources&& r,
       std::optional<security::sasl_server> sasl,
       bool enable_authorizer,
       std::optional<security::tls::mtls_state> mtls_state,
@@ -295,7 +295,7 @@ private:
     };
 
     protocol& _proto;
-    net::server::resources _rs;
+    net::server_resources _rs;
     sequence_id _next_response;
     sequence_id _seq_idx;
     map_t _responses;

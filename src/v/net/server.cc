@@ -137,7 +137,7 @@ static inline void print_exceptional_future(
 }
 
 static ss::future<> apply_proto(
-  server::protocol* proto, server::resources&& rs, conn_quota::units cq_units) {
+  server::protocol* proto, server_resources&& rs, conn_quota::units cq_units) {
     auto conn = rs.conn;
     return proto->apply(std::move(rs))
       .then_wrapped(
@@ -237,7 +237,9 @@ ss::future<> server::accept(listener& s) {
                 _conn_gate,
                 [this, conn, cq_units = std::move(cq_units)]() mutable {
                     return apply_proto(
-                      _proto.get(), resources(this, conn), std::move(cq_units));
+                      _proto.get(),
+                      server_resources(this, conn),
+                      std::move(cq_units));
                 });
               co_return ss::stop_iteration::no;
           });
