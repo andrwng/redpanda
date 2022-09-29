@@ -105,7 +105,7 @@ void server::start() {
 }
 
 static inline void print_exceptional_future(
-  server::protocol* proto,
+  server_protocol* proto,
   ss::future<> f,
   const char* ctx,
   ss::socket_address address) {
@@ -137,7 +137,7 @@ static inline void print_exceptional_future(
 }
 
 static ss::future<> apply_proto(
-  server::protocol* proto, server_resources&& rs, conn_quota::units cq_units) {
+  server_protocol* proto, server_resources&& rs, conn_quota::units cq_units) {
     auto conn = rs.conn;
     return proto->apply(std::move(rs))
       .then_wrapped(

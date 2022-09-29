@@ -65,7 +65,7 @@ private:
     virtual void check_server() = 0;
 };
 
-template<std::derived_from<net::server::protocol> T>
+template<std::derived_from<net::server_protocol> T>
 class rpc_fixture_swappable_proto : public rpc_base_integration_fixture {
 public:
     explicit rpc_fixture_swappable_proto(uint16_t port)

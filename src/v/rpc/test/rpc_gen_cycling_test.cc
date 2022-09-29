@@ -655,7 +655,7 @@ FIXTURE_TEST(version_not_supported, rpc_integration_fixture) {
 
 class erroneous_protocol_exception : public std::exception {};
 
-class erroneous_protocol final : public net::server::protocol {
+class erroneous_protocol final : public net::server_protocol {
 public:
     template<std::derived_from<rpc::service> T, typename... Args>
     void register_service(Args&&... args) {

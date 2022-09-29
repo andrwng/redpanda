@@ -97,22 +97,22 @@ struct server_configuration {
 
 class server_resources;
 
+struct server_protocol {
+    server_protocol() noexcept = default;
+    server_protocol(server_protocol&&) noexcept = default;
+    server_protocol& operator=(server_protocol&&) noexcept = default;
+    server_protocol(const server_protocol&) = delete;
+    server_protocol& operator=(const server_protocol&) = delete;
+
+    virtual ~server_protocol() noexcept = default;
+    virtual const char* name() const = 0;
+    // The lifetime of all references here are guaranteed to live
+    // until the end of the server (container/parent)
+    virtual ss::future<> apply(server_resources) = 0;
+};
+
 class server {
 public:
-    struct protocol {
-        protocol() noexcept = default;
-        protocol(protocol&&) noexcept = default;
-        protocol& operator=(protocol&&) noexcept = default;
-        protocol(const protocol&) = delete;
-        protocol& operator=(const protocol&) = delete;
-
-        virtual ~protocol() noexcept = default;
-        virtual const char* name() const = 0;
-        // the lifetime of all references here are guaranteed to live
-        // until the end of the server (container/parent)
-        virtual ss::future<> apply(server_resources) = 0;
-    };
-
     explicit server(server_configuration);
     explicit server(ss::sharded<server_configuration>* s);
     server(server&&) noexcept = default;
@@ -121,10 +121,10 @@ public:
     server& operator=(const server&) = delete;
     ~server();
 
-    void set_protocol(std::unique_ptr<protocol> proto) {
+    void set_protocol(std::unique_ptr<server_protocol> proto) {
         _proto = std::move(proto);
     }
-    protocol* get_protocol() { return _proto.get(); }
+    server_protocol* get_protocol() { return _proto.get(); }
 
     void start();
 
@@ -162,7 +162,7 @@ private:
     void setup_metrics();
     void setup_public_metrics();
 
-    std::unique_ptr<protocol> _proto;
+    std::unique_ptr<server_protocol> _proto;
     ssx::semaphore _memory;
     std::vector<std::unique_ptr<listener>> _listeners;
     boost::intrusive::list<net::connection> _connections;

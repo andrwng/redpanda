@@ -32,7 +32,7 @@
 
 namespace kafka {
 
-class protocol final : public net::server::protocol {
+class protocol final : public net::server_protocol {
 public:
     protocol(
       ss::smp_service_group,

@@ -16,7 +16,7 @@
 #include <concepts>
 
 namespace rpc {
-class simple_protocol final : public net::server::protocol {
+class simple_protocol final : public net::server_protocol {
 public:
     template<std::derived_from<service> T, typename... Args>
     void register_service(Args&&... args) {
