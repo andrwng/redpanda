@@ -111,20 +111,31 @@ struct server_protocol {
     virtual ss::future<> apply(server_resources) = 0;
 };
 
-class server {
+class server_resource_interface {
+public:
+    virtual server_probe& probe() = 0;
+    virtual ssx::semaphore& memory() = 0;
+    virtual hdr_hist& hist() = 0;
+    virtual ss::gate& conn_gate() = 0;
+    virtual ss::abort_source& abort_source() = 0;
+    virtual bool abort_requested() = 0;
+};
+
+template<typename proto_t>
+class server : public server_resource_interface {
 public:
     explicit server(server_configuration);
     explicit server(ss::sharded<server_configuration>* s);
-    server(server&&) noexcept = default;
-    server& operator=(server&&) noexcept = delete;
-    server(const server&) = delete;
-    server& operator=(const server&) = delete;
+    server(server<proto_t>&&) noexcept = default;
+    server& operator=(server<proto_t>&&) noexcept = delete;
+    server(const server<proto_t>&) = delete;
+    server& operator=(const server<proto_t>&) = delete;
     ~server();
 
-    void set_protocol(std::unique_ptr<server_protocol> proto) {
+    void set_protocol(std::unique_ptr<proto_t> proto) {
         _proto = std::move(proto);
     }
-    server_protocol* get_protocol() { return _proto.get(); }
+    proto_t* get_protocol() { return _proto.get(); }
 
     void start();
 
@@ -147,6 +158,13 @@ public:
     const server_configuration cfg; // NOLINT
     const hdr_hist& histogram() const { return _hist; }
 
+    server_probe& probe() override { return _probe; }
+    ssx::semaphore& memory() override { return _memory; }
+    hdr_hist& hist() override { return _hist; }
+    ss::gate& conn_gate() override { return _conn_gate; }
+    ss::abort_source& abort_source() override { return _as; }
+    bool abort_requested() override { return _as.abort_requested(); }
+
 private:
     struct listener {
         ss::sstring name;
@@ -157,12 +175,11 @@ private:
           , socket(std::move(socket)) {}
     };
 
-    friend server_resources;
     ss::future<> accept(listener&);
     void setup_metrics();
     void setup_public_metrics();
 
-    std::unique_ptr<server_protocol> _proto;
+    std::unique_ptr<proto_t> _proto;
     ssx::semaphore _memory;
     std::vector<std::unique_ptr<listener>> _listeners;
     boost::intrusive::list<net::connection> _connections;
@@ -180,22 +197,22 @@ private:
 class server_resources final {
 public:
     // always guaranteed non-null
-    server_resources(server* s, ss::lw_shared_ptr<net::connection> c)
+    server_resources(server_resource_interface* s, ss::lw_shared_ptr<net::connection> c)
       : conn(std::move(c))
       , _s(s) {}
 
     // NOLINTNEXTLINE
     ss::lw_shared_ptr<net::connection> conn;
 
-    server_probe& probe() { return _s->_probe; }
-    ssx::semaphore& memory() { return _s->_memory; }
-    hdr_hist& hist() { return _s->_hist; }
-    ss::gate& conn_gate() { return _s->_conn_gate; }
-    ss::abort_source& abort_source() { return _s->_as; }
-    bool abort_requested() const { return _s->_as.abort_requested(); }
+    server_probe& probe() { return _s->probe(); }
+    ssx::semaphore& memory() { return _s->memory(); }
+    hdr_hist& hist() { return _s->hist(); }
+    ss::gate& conn_gate() { return _s->conn_gate(); }
+    ss::abort_source& abort_source() { return _s->abort_source(); }
+    bool abort_requested() const { return _s->abort_requested(); }
 
 private:
-    server* _s;
+    server_resource_interface* _s;
 };
 
 } // namespace net

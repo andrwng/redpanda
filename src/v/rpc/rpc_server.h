@@ -56,7 +56,7 @@ public:
     ss::future<> stop() { return _server.stop(); }
 
 private:
-    net::server _server;
+    net::server<rpc::simple_protocol> _server;
 };
 
 } // namespace rpc

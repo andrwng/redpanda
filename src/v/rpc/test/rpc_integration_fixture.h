@@ -99,7 +99,7 @@ public:
             : nullptr);
         scfg.max_service_memory_per_core = static_cast<int64_t>(
           ss::memory::stats().total_memory() / 10);
-        _server = std::make_unique<net::server>(std::move(scfg));
+        _server = std::make_unique<net::server<T>>(std::move(scfg));
         _proto = std::make_unique<T>();
     }
 
@@ -118,7 +118,7 @@ private:
     }
 
     std::unique_ptr<T> _proto;
-    std::unique_ptr<net::server> _server;
+    std::unique_ptr<net::server<T>> _server;
 };
 
 using rpc_simple_integration_fixture

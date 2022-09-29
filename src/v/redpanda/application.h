@@ -21,7 +21,7 @@
 #include "kafka/client/fwd.h"
 #include "kafka/server/fwd.h"
 #include "net/conn_quota.h"
-#include "net/fwd.h"
+#include "net/server.h"
 #include "pandaproxy/rest/configuration.h"
 #include "pandaproxy/rest/fwd.h"
 #include "pandaproxy/schema_registry/configuration.h"
@@ -45,6 +45,14 @@
 #include <seastar/util/defer.hh>
 
 namespace po = boost::program_options; // NOLINT
+
+namespace kafka {
+class protocol;
+} // namespace kafka
+
+namespace rpc {
+class simple_protocol;
+} // namespace rpc
 
 inline const auto redpanda_start_time{
   std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -168,10 +176,10 @@ private:
     ss::sharded<features::feature_table> _feature_table;
     ss::sharded<kafka::group_manager> _group_manager;
     ss::sharded<kafka::group_manager> _co_group_manager;
-    ss::sharded<net::server> _rpc;
+    ss::sharded<net::server<rpc::simple_protocol>> _rpc;
     ss::sharded<admin_server> _admin;
     ss::sharded<net::conn_quota> _kafka_conn_quotas;
-    ss::sharded<net::server> _kafka_server;
+    ss::sharded<net::server<kafka::protocol>> _kafka_server;
     ss::sharded<kafka::client::client> _proxy_client;
     ss::sharded<pandaproxy::rest::proxy> _proxy;
     std::unique_ptr<pandaproxy::schema_registry::api> _schema_registry;

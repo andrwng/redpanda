@@ -13,6 +13,4 @@
 
 namespace net {
 
-class server;
-
 } // namespace net

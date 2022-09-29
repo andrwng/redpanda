@@ -29,19 +29,31 @@
 #include <seastar/net/api.hh>
 #include <seastar/util/later.hh>
 
+namespace kafka {
+class protocol;
+} // kafka
+
+namespace rpc {
+class simple_protocol;
+} // rpc
+
 namespace net {
 
-server::server(server_configuration c)
+template <typename proto_t>
+server<proto_t>::server(server_configuration c)
   : cfg(std::move(c))
   , _memory{size_t{static_cast<size_t>(cfg.max_service_memory_per_core)}, "net/server-mem"}
   , _public_metrics(ssx::metrics::public_metrics_handle) {}
 
-server::server(ss::sharded<server_configuration>* s)
+template <typename proto_t>
+server<proto_t>::server(ss::sharded<server_configuration>* s)
   : server(s->local()) {}
 
-server::~server() = default;
+template <typename proto_t>
+server<proto_t>::~server() = default;
 
-void server::start() {
+template <typename proto_t>
+void server<proto_t>::start() {
     vassert(_proto, "must have a registered protocol before starting");
     if (!cfg.disable_metrics) {
         setup_metrics();
@@ -104,8 +116,9 @@ void server::start() {
     }
 }
 
+template <typename proto_t>
 static inline void print_exceptional_future(
-  server_protocol* proto,
+  proto_t* proto,
   ss::future<> f,
   const char* ctx,
   ss::socket_address address) {
@@ -136,8 +149,9 @@ static inline void print_exceptional_future(
     }
 }
 
+template <typename proto_t>
 static ss::future<> apply_proto(
-  server_protocol* proto, server_resources&& rs, conn_quota::units cq_units) {
+  proto_t* proto, server_resources&& rs, conn_quota::units cq_units) {
     auto conn = rs.conn;
     return proto->apply(std::move(rs))
       .then_wrapped(
@@ -153,7 +167,8 @@ static ss::future<> apply_proto(
       .finally([conn] {});
 }
 
-ss::future<> server::accept(listener& s) {
+template <typename proto_t>
+ss::future<> server<proto_t>::accept(listener& s) {
     return ss::repeat([this, &s]() mutable {
         return s.socket.accept().then_wrapped(
           [this, &s](ss::future<ss::accept_result> f_cs_sa) mutable
@@ -246,7 +261,8 @@ ss::future<> server::accept(listener& s) {
     });
 }
 
-void server::shutdown_input() {
+template <typename proto_t>
+void server<proto_t>::shutdown_input() {
     ss::sstring proto_name = _proto ? _proto->name() : "protocol not set";
     vlog(
       rpc::rpclog.info,
@@ -269,7 +285,8 @@ void server::shutdown_input() {
     }
 }
 
-ss::future<> server::wait_for_shutdown() {
+template <typename proto_t>
+ss::future<> server<proto_t>::wait_for_shutdown() {
     if (!_as.abort_requested()) {
         shutdown_input();
     }
@@ -284,7 +301,8 @@ ss::future<> server::wait_for_shutdown() {
     });
 }
 
-ss::future<> server::stop() {
+template <typename proto_t>
+ss::future<> server<proto_t>::stop() {
     // if shutdown input was already requested this method is nop, user has to
     // wait explicitly for shutdown to finish with `wait_for_shutdown`
     if (_as.abort_requested()) {
@@ -295,7 +313,8 @@ ss::future<> server::stop() {
     return wait_for_shutdown();
 }
 
-void server::setup_metrics() {
+template <typename proto_t>
+void server<proto_t>::setup_metrics() {
     namespace sm = ss::metrics;
     if (!_proto) {
         return;
@@ -318,7 +337,8 @@ void server::setup_metrics() {
          sm::description(ssx::sformat("{}: Latency ", cfg.name)))});
 }
 
-void server::setup_public_metrics() {
+template <typename proto_t>
+void server<proto_t>::setup_public_metrics() {
     namespace sm = ss::metrics;
     if (!_proto) {
         return;
