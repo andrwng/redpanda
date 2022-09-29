@@ -870,6 +870,7 @@ struct join_node_request
     // selection of node_id.  Convert to a more convenient type later:
     // the vector is just to reserve the on-disk layout.
     std::vector<uint8_t> node_uuid;
+
     model::broker node;
 
     friend bool operator==(const join_node_request&, const join_node_request&)

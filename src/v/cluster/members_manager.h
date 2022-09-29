@@ -12,6 +12,7 @@
 #pragma once
 
 #include "cluster/commands.h"
+#include "cluster/controller_stm.h"
 #include "cluster/fwd.h"
 #include "cluster/types.h"
 #include "config/seed_server.h"
@@ -23,6 +24,10 @@
 #include "random/simple_time_jitter.h"
 #include "rpc/fwd.h"
 #include "storage/fwd.h"
+
+namespace features {
+class feature_table;
+} // namespace features
 
 namespace cluster {
 
@@ -45,7 +50,8 @@ public:
       decommission_node_cmd,
       recommission_node_cmd,
       finish_reallocations_cmd,
-      maintenance_mode_cmd>{};
+      maintenance_mode_cmd,
+      register_node_uuid_cmd>{};
     static constexpr ss::shard_id shard = 0;
     static constexpr size_t max_updates_queue_size = 100;
 
@@ -85,6 +91,8 @@ public:
 
     members_manager(
       consensus_ptr,
+      ss::sharded<controller_stm>&,
+      ss::sharded<features::feature_table>&,
       ss::sharded<members_table>&,
       ss::sharded<rpc::connection_cache>&,
       ss::sharded<partition_allocator>&,
@@ -114,9 +122,13 @@ public:
     // the queue are aborted separately.
     ss::future<> stop();
 
-    // Adds a node to the controller Raft group, dispatching to the leader if
-    // necessary. If the node already exists, just updates the node config
-    // instead.
+    // If the given request contains a node ID, adds a node to the controller
+    // Raft group, dispatching to the leader if necessary. If the node already
+    // exists, just updates the node config instead.
+    //
+    // If no node ID is provided (indicated by a negative value), replicates a
+    // controller command to register the requested node UUID, responding with
+    // a newly assigned node ID.
     ss::future<result<join_node_reply>>
     handle_join_request(join_node_request const r);
 
@@ -140,13 +152,31 @@ public:
     // concurrently from multiple fibers.
     ss::future<std::vector<node_update>> get_node_updates();
 
+    model::node_id get_node_id(const model::node_uuid&);
+
 private:
+    using uuid_map_t = absl::flat_hash_map<model::node_uuid, model::node_id>;
     using seed_iterator = std::vector<config::seed_server>::const_iterator;
     // Cluster join
     void join_raft0();
     bool is_already_member() const;
 
     ss::future<> initialize_broker_connection(const model::broker&);
+
+    ss::future<result<join_node_reply>> replicate_new_node_uuid(
+      const model::node_uuid&,
+      const std::optional<model::node_id>& = std::nullopt);
+
+    // Returns the node ID for a given node UUID, assigning one if one does not
+    // already exist. Returns nullopt when there are no more node IDs left.
+    std::optional<model::node_id>
+    get_or_assign_node_id(const model::node_uuid&);
+
+    // Attempts to register the given node ID with the given node UUID. If a
+    // different node ID exists for the given node UUID, returns false.
+    //
+    // Does not check for duplicate node IDs.
+    bool try_register_node_id(const model::node_id&, const model::node_uuid&);
 
     ss::future<result<join_node_reply>> dispatch_join_to_seed_server(
       seed_iterator it, join_node_request const& req);
@@ -178,7 +208,11 @@ private:
     simple_time_jitter<model::timeout_clock> _join_retry_jitter;
     const std::chrono::milliseconds _join_timeout;
     const consensus_ptr _raft0;
+
+    ss::sharded<controller_stm>& _controller_stm;
+    ss::sharded<features::feature_table>& _feature_table;
     ss::sharded<members_table>& _members_table;
+
     ss::sharded<rpc::connection_cache>& _connection_cache;
 
     // Partition allocator to update when receiving node lifecycle commands.
@@ -206,6 +240,10 @@ private:
     // Cluster membership updates that have yet to be released via the call to
     // get_node_updates().
     ss::queue<node_update> _update_queue;
+
+    uuid_map_t _id_by_uuid;
+
+    model::node_id _next_assigned_id;
 
     // Subscription to _as with which to signal an abort to _update_queue.
     ss::abort_source::subscription _queue_abort_subscription;

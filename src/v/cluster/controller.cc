@@ -116,6 +116,8 @@ ss::future<> controller::start() {
       .then([this] {
           return _members_manager.start_single(
             _raft0,
+            std::ref(_stm),
+            std::ref(_feature_table),
             std::ref(_members_table),
             std::ref(_connections),
             std::ref(_partition_allocator),
