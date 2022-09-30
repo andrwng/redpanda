@@ -108,32 +108,29 @@ ss::future<> maybe_create_tcp_client(
         // client is already there, check if configuration changed
         if (cache.get(node)->server_address() == rpc_address) {
             // If configuration did not changed, do nothing
-            return f;
+            co_return;
         }
         // configuration changed, first remove the client
-        f = cache.remove(node);
+        co_await cache.remove(node);
+    }
+    auto reused_existing = co_await cache.maybe_use_existing_transport(
+      node, rpc_address);
+    if (reused_existing) {
+        co_return;
     }
     // there is no client in cache, create new
-    return f.then([&cache,
-                   node,
-                   rpc_address = std::move(rpc_address),
-                   tls_config = std::move(tls_config)]() mutable {
-        return maybe_build_reloadable_certificate_credentials(
-                 std::move(tls_config))
-          .then(
-            [&cache, node, rpc_address = std::move(rpc_address)](
-              ss::shared_ptr<ss::tls::certificate_credentials>&& cert) mutable {
-                return cache.emplace(
-                  node,
-                  rpc::transport_configuration{
-                    .server_addr = std::move(rpc_address),
-                    .credentials = cert,
-                    .disable_metrics = net::metrics_disabled(
-                      config::shard_local_cfg().disable_metrics)},
-                  rpc::make_exponential_backoff_policy<rpc::clock_type>(
-                    std::chrono::seconds(1), std::chrono::seconds(15)));
-            });
-    });
+    auto cert = co_await maybe_build_reloadable_certificate_credentials(
+      std::move(tls_config));
+
+    co_await cache.emplace(
+      node,
+      rpc::transport_configuration{
+        .server_addr = std::move(rpc_address),
+        .credentials = cert,
+        .disable_metrics = net::metrics_disabled(
+          config::shard_local_cfg().disable_metrics)},
+      rpc::make_exponential_backoff_policy<rpc::clock_type>(
+        std::chrono::seconds(1), std::chrono::seconds(15)));
 }
 
 ss::future<> add_one_tcp_client(

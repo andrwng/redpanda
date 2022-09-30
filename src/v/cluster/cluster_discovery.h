@@ -21,6 +21,10 @@ namespace config {
 struct node_config;
 } // namespace config
 
+namespace storage {
+class kvstore;
+} // namespace storage
+
 namespace cluster {
 
 // Provides metadata pertaining to initial cluster discovery.
@@ -28,7 +32,8 @@ class cluster_discovery {
 public:
     cluster_discovery(
       const config::node_config& node_config,
-      const model::node_uuid& node_uuid);
+      const model::node_uuid& node_uuid,
+      storage::kvstore& kvstore);
 
     // TODO: below is not accurate yet. Implement me!
     //
@@ -68,6 +73,8 @@ private:
     // Local configuration of this node.
     const config::node_config& _node_config;
     const model::node_uuid _node_uuid;
+
+    storage::kvstore& _kvstore;
 };
 
 } // namespace cluster

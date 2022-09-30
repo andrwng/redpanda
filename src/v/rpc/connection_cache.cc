@@ -17,6 +17,26 @@
 
 namespace rpc {
 
+ss::future<bool> connection_cache::maybe_use_existing_transport_unlocked(
+  model::node_id node_id, const net::unresolved_address& addr) {
+    for (const auto& [cached_node_id, transport_ptr] : _cache) {
+        if (cached_node_id == node_id) {
+            co_return transport_ptr->server_address() == addr;
+        }
+        if (transport_ptr->server_address() == addr) {
+            _cache.emplace(node_id, transport_ptr);
+            co_return true;
+        }
+    }
+    co_return false;
+}
+ss::future<bool> connection_cache::maybe_use_existing_transport(
+  model::node_id node_id, const net::unresolved_address& addr) {
+    return _mutex.with([this, node_id, addr]() {
+        return maybe_use_existing_transport_unlocked(node_id, addr);
+    });
+}
+
 /// \brief needs to be a future, because mutations may come from different
 /// fibers and they need to be synchronized
 ss::future<> connection_cache::emplace(

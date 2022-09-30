@@ -1351,7 +1351,8 @@ void application::wire_up_and_start(::stop_signal& app_signal) {
     // ID. A valid node ID is required before we can initialize the rest of our
     // subsystems.
     const auto& node_uuid = storage.local().node_uuid();
-    cluster::cluster_discovery cd(config::node(), node_uuid);
+    cluster::cluster_discovery cd(
+      config::node(), node_uuid, storage.local().kvs());
     auto node_id = cd.determine_node_id().get();
     if (config::node().node_id() == std::nullopt) {
         config::node().node_id.set_value(
@@ -1505,7 +1506,8 @@ void application::start_runtime_services(::stop_signal& app_signal) {
  * cluster -- this is expected to be run last, after everything else is
  * started.
  */
-void application::start_kafka(const model::node_id& node_id, ::stop_signal& app_signal) {
+void application::start_kafka(
+  const model::node_id& node_id, ::stop_signal& app_signal) {
     // Kafka API
     // The Kafka listener is intentionally the last thing we start: during
     // this phase we will wait for the node to be a cluster member before

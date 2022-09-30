@@ -46,6 +46,11 @@ public:
     }
     transport_ptr get(model::node_id n) const { return _cache.find(n)->second; }
 
+    ss::future<bool> maybe_use_existing_transport(
+      model::node_id, const net::unresolved_address&);
+    ss::future<bool> maybe_use_existing_transport_unlocked(
+      model::node_id, const net::unresolved_address&);
+
     /// \brief needs to be a future, because mutations may come from different
     /// fibers and they need to be synchronized
     ss::future<>

@@ -323,6 +323,14 @@ void heartbeat_manager::process_reply(
               n);
             continue;
         }
+        if (unlikely(m.result == append_entries_reply::status::failure)) {
+            vlog(
+              hbeatlog.debug,
+              "Heartbeat request for group {} failed on the node {}",
+              m.group,
+              n);
+            continue;
+        }
 
         if (unlikely(m.target_node_id != consensus->self())) {
             vlog(

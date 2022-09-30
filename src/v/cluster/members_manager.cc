@@ -476,7 +476,8 @@ bool members_manager::try_register_node_id(
     vlog(
       clusterlog.info,
       "Registering node ID {} as node UUID {}",
-      requested_node_id, requested_node_uuid);
+      requested_node_id,
+      requested_node_uuid);
     const auto it = _id_by_uuid.find(requested_node_uuid);
     if (it == _id_by_uuid.end()) {
         if (_members_table.local().contains(requested_node_id)) {
@@ -639,6 +640,17 @@ members_manager::handle_join_request(join_node_request const req) {
           req.node.id());
         co_return errc::invalid_request;
     }
+    std::optional<model::node_id> req_node_id = std::nullopt;
+    if (req.node.id() >= 0) {
+        req_node_id = req.node.id();
+    }
+    if (!node_id_assignment_supported && !req_node_id) {
+        vlog(
+          clusterlog.warn,
+          "Got request to assign node ID, but feature not active",
+          req.node.id());
+        co_return errc::invalid_request;
+    }
     if (req_has_node_uuid && req.node_uuid.size() != model::node_uuid::length) {
         vlog(
           clusterlog.warn,
@@ -647,7 +659,7 @@ members_manager::handle_join_request(join_node_request const req) {
         co_return errc::invalid_request;
     }
     model::node_uuid node_uuid;
-    if (req.node.id() < 0 && !req_has_node_uuid) {
+    if (!req_node_id && !req_has_node_uuid) {
         vlog(clusterlog.warn, "Node ID assignment attempt had no node UUID");
         co_return errc::invalid_request;
     }
@@ -685,10 +697,6 @@ members_manager::handle_join_request(join_node_request const req) {
           });
     }
 
-    std::optional<model::node_id> req_node_id = std::nullopt;
-    if (req.node.id() >= 0) {
-        req_node_id = req.node.id();
-    }
     if (likely(node_id_assignment_supported && req_has_node_uuid)) {
         const auto it = _id_by_uuid.find(node_uuid);
         if (!req_node_id) {
@@ -696,7 +704,8 @@ members_manager::handle_join_request(join_node_request const req) {
                 // The UUID isn't yet in our table. Register it, but return,
                 // expecting the node to come back with another join request
                 // once its Raft subsystems are up.
-                co_return co_await replicate_new_node_uuid(node_uuid, req_node_id);
+                co_return co_await replicate_new_node_uuid(
+                  node_uuid, req_node_id);
             }
             // The requested UUID already exists; this is a duplicate request
             // to assign a node ID. Just return the registered node ID.
@@ -744,15 +753,15 @@ members_manager::handle_join_request(join_node_request const req) {
           });
     }
 
-    if (_raft0->config().contains_address(req.node.rpc_address())) {
-        vlog(
-          clusterlog.info,
-          "Broker {} address ({}) conflicts with the address of another "
-          "node",
-          req.node.id(),
-          req.node.rpc_address());
-        co_return ret_t(join_node_reply{false, model::node_id(-1)});
-    }
+    // if (_raft0->config().contains_address(req.node.rpc_address())) {
+    //     vlog(
+    //       clusterlog.info,
+    //       "Broker {} address ({}) conflicts with the address of another "
+    //       "node",
+    //       req.node.id(),
+    //       req.node.rpc_address());
+    //     co_return ret_t(join_node_reply{false, model::node_id(-1)});
+    // }
     if (req.node.id() != _self.id()) {
         co_await update_broker_client(
           _self.id(),
