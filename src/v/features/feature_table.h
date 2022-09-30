@@ -40,6 +40,7 @@ enum class feature : std::uint64_t {
     license = 0x40,
     raft_improved_configuration = 0x80,
     transaction_ga = 0x100,
+    node_id_assignment = 0x200,
 
     // Dummy features for testing only
     test_alpha = uint64_t(1) << 63,
@@ -144,6 +145,12 @@ constexpr static std::array feature_schema{
     cluster_version{6},
     "transaction_ga",
     feature::transaction_ga,
+    feature_spec::available_policy::always,
+    feature_spec::prepare_policy::always},
+  feature_spec{
+    cluster_version{6},
+    "node_id_assignment",
+    feature::node_id_assignment,
     feature_spec::available_policy::always,
     feature_spec::prepare_policy::always},
   feature_spec{

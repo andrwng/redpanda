@@ -38,7 +38,8 @@ std::string_view to_string_view(feature f) {
     case feature::raft_improved_configuration:
         return "raft_improved_configuration";
     case feature::transaction_ga:
-        return "transaction_ga";
+    case feature::node_id_assignment:
+        return "node_id_assignment";
     case feature::test_alpha:
         return "__test_alpha";
     }

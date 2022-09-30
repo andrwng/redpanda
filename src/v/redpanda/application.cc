@@ -1353,8 +1353,9 @@ void application::wire_up_and_start(::stop_signal& app_signal) {
     const auto& node_uuid = storage.local().node_uuid();
     cluster::cluster_discovery cd(config::node(), node_uuid);
     auto node_id = cd.determine_node_id().get();
-    if (config::node().node_id() != model::node_id(-1)) {
-        config::node().node_id.set_value(std::make_optional<model::node_id>(node_id));
+    if (config::node().node_id() == std::nullopt) {
+        config::node().node_id.set_value(
+          std::make_optional<model::node_id>(node_id));
     }
 
     vlog(_log.info, "Starting Redpanda with node_id {}", node_id);
@@ -1378,7 +1379,7 @@ void application::wire_up_and_start(::stop_signal& app_signal) {
           _schema_reg_config->schema_registry_api());
     }
 
-    start_kafka(app_signal);
+    start_kafka(node_id, app_signal);
 
     _admin.invoke_on_all([](admin_server& admin) { admin.set_ready(); }).get();
 
@@ -1504,7 +1505,7 @@ void application::start_runtime_services(::stop_signal& app_signal) {
  * cluster -- this is expected to be run last, after everything else is
  * started.
  */
-void application::start_kafka(::stop_signal& app_signal) {
+void application::start_kafka(const model::node_id& node_id, ::stop_signal& app_signal) {
     // Kafka API
     // The Kafka listener is intentionally the last thing we start: during
     // this phase we will wait for the node to be a cluster member before
@@ -1553,7 +1554,7 @@ void application::start_kafka(::stop_signal& app_signal) {
     vlog(_log.info, "Waiting for cluster membership");
     controller->get_members_table()
       .local()
-      .await_membership(*config::node().node_id(), app_signal.abort_source())
+      .await_membership(node_id, app_signal.abort_source())
       .get();
     _kafka_server.invoke_on_all(&net::server::start).get();
     vlog(

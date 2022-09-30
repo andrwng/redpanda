@@ -283,6 +283,10 @@ members_manager::apply_update(model::record_batch b) {
       [this](register_node_uuid_cmd cmd) {
           const auto& node_uuid = cmd.key;
           const auto& requested_node_id = cmd.value;
+          vlog(
+            clusterlog.info,
+            "Applying register_node_uuid_cmd for UUID {}",
+            node_uuid);
           if (requested_node_id) {
               if (likely(try_register_node_id(*requested_node_id, node_uuid))) {
                   return ss::make_ready_future<std::error_code>(errc::success);
@@ -436,6 +440,7 @@ void members_manager::join_raft0() {
                             std::move(join_node_request{
                               features::feature_table::
                                 get_latest_logical_version(),
+                              _storage.local().node_uuid().to_vector(),
                               _self}))
                      .then([this](result<join_node_reply> r) {
                          bool success = r && r.value().success;
@@ -468,6 +473,10 @@ bool members_manager::try_register_node_id(
   const model::node_id& requested_node_id,
   const model::node_uuid& requested_node_uuid) {
     vassert(requested_node_id != model::node_id(-1), "invalid node ID");
+    vlog(
+      clusterlog.info,
+      "Registering node ID {} as node UUID {}",
+      requested_node_id, requested_node_uuid);
     const auto it = _id_by_uuid.find(requested_node_uuid);
     if (it == _id_by_uuid.end()) {
         if (_members_table.local().contains(requested_node_id)) {
@@ -477,8 +486,8 @@ bool members_manager::try_register_node_id(
             clusterlog.info(
               "registering node ID that is already a member of the cluster");
         }
-        // This is a brand new node with node ID assignment support, requesting
-        // the given node ID.
+        // This is a brand new node with node ID assignment support that's
+        // requesting the given node ID.
         _id_by_uuid.emplace(requested_node_uuid, requested_node_id);
         return true;
     }
@@ -619,8 +628,18 @@ ss::future<result<join_node_reply>> members_manager::replicate_new_node_uuid(
 ss::future<result<join_node_reply>>
 members_manager::handle_join_request(join_node_request const req) {
     using ret_t = result<join_node_reply>;
-    if (!(req.node_uuid.empty()
-          || req.node_uuid.size() == model::node_uuid::length)) {
+
+    bool node_id_assignment_supported = _feature_table.local().is_active(
+      features::feature::node_id_assignment);
+    bool req_has_node_uuid = !req.node_uuid.empty();
+    if (node_id_assignment_supported && !req_has_node_uuid) {
+        vlog(
+          clusterlog.warn,
+          "Invalid join request for node ID {}, node UUID is required",
+          req.node.id());
+        co_return errc::invalid_request;
+    }
+    if (req_has_node_uuid && req.node_uuid.size() != model::node_uuid::length) {
         vlog(
           clusterlog.warn,
           "Invalid join request, expected UUID or empty; got {}-byte value",
@@ -628,7 +647,6 @@ members_manager::handle_join_request(join_node_request const req) {
         co_return errc::invalid_request;
     }
     model::node_uuid node_uuid;
-    bool req_has_node_uuid = !req.node_uuid.empty();
     if (req.node.id() < 0 && !req_has_node_uuid) {
         vlog(clusterlog.warn, "Node ID assignment attempt had no node UUID");
         co_return errc::invalid_request;
@@ -671,30 +689,36 @@ members_manager::handle_join_request(join_node_request const req) {
     if (req.node.id() >= 0) {
         req_node_id = req.node.id();
     }
-    if (req_has_node_uuid) {
+    if (likely(node_id_assignment_supported && req_has_node_uuid)) {
         const auto it = _id_by_uuid.find(node_uuid);
-        if (it == _id_by_uuid.end()) {
-            // The UUID isn't yet in our table. Register it.
-            co_return co_await replicate_new_node_uuid(
-              node_uuid,
-              req_node_id);
-        }
         if (!req_node_id) {
-            // The requested UUID does exist; this is a duplicate registration
-            // attempt. Just return the registered node ID.
+            if (it == _id_by_uuid.end()) {
+                // The UUID isn't yet in our table. Register it, but return,
+                // expecting the node to come back with another join request
+                // once its Raft subsystems are up.
+                co_return co_await replicate_new_node_uuid(node_uuid, req_node_id);
+            }
+            // The requested UUID already exists; this is a duplicate request
+            // to assign a node ID. Just return the registered node ID.
             co_return ret_t(join_node_reply{true, it->second});
         }
-        // We've been provided a UUID that is already in the table, and a node
-        // ID. This is an request to join the cluster. Validate that the node
-        // ID matches the one in our table and proceed to join.
-        if (*req_node_id != it->second) {
-            co_return ret_t(join_node_reply{false, model::node_id(-1)});
+        // We've been passed a node ID.
+        if (it == _id_by_uuid.end()) {
+            // The node ID was manually provided and this is a new attempt to
+            // register the UUID.
+            auto r = co_await replicate_new_node_uuid(node_uuid, req_node_id);
+            if (r.has_error() || !r.value().success) {
+                co_return r;
+            }
+        } else {
+            // Validate that the node ID matches the one in our table.
+            if (*req_node_id != it->second) {
+                co_return ret_t(join_node_reply{false, model::node_id(-1)});
+            }
         }
-    } else {
-        // There is no node UUID, so presumably this is an older version of
-        // Redpanda. Ensure that the node ID assignment feature isn't
-        // activated, and proceed with the rest of registration as usual.
-        // TODO:
+        // Proceed to adding the node ID to the controller Raft group.
+        // Presumably the node that made this join request started its Raft
+        // subsystem with the node ID and is waiting to join the group.
     }
 
     // if configuration contains the broker already just update its config

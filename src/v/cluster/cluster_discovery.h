@@ -62,7 +62,8 @@ private:
 
     ss::future<model::node_id> request_node_id_for_uuid();
 
-    ss::future<ss::stop_iteration> attempt_node_uuid_registration(model::node_id&);
+    ss::future<ss::stop_iteration>
+    attempt_node_uuid_registration(model::node_id&);
 
     // Local configuration of this node.
     const config::node_config& _node_config;
