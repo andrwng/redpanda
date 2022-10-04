@@ -756,15 +756,6 @@ members_manager::handle_join_request(join_node_request const req) {
           });
     }
 
-    if (_raft0->config().contains_address(req.node.rpc_address())) {
-        vlog(
-          clusterlog.info,
-          "Broker {} address ({}) conflicts with the address of another "
-          "node",
-          req.node.id(),
-          req.node.rpc_address());
-        co_return ret_t(join_node_reply{false, model::node_id(-1)});
-    }
     if (req.node.id() != _self.id()) {
         co_await update_broker_client(
           _self.id(),
