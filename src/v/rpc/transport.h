@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "model/metadata.h"
 #include "net/transport.h"
 #include "outcome.h"
 #include "reflection/async_adl.h"
@@ -56,7 +57,8 @@ class transport final : public net::base_transport {
 public:
     explicit transport(
       transport_configuration c,
-      std::optional<connection_cache_label> label = std::nullopt);
+      std::optional<connection_cache_label> label = std::nullopt,
+      std::optional<model::node_id> node_id = std::nullopt);
     ~transport() override;
     transport(transport&&) noexcept = default;
     // semaphore is not move assignable
@@ -93,7 +95,9 @@ private:
     ss::future<> do_reads();
     ss::future<> dispatch(header);
     void fail_outstanding_futures() noexcept final;
-    void setup_metrics(const std::optional<connection_cache_label>&);
+    void setup_metrics(
+      const std::optional<connection_cache_label>&,
+      const std::optional<model::node_id>&);
 
     ss::future<result<std::unique_ptr<streaming_context>>>
       do_send(sequence_t, netbuf, rpc::client_opts);
