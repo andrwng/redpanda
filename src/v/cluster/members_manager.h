@@ -108,7 +108,7 @@ public:
     // raft messages, and if we're not ready it'll back off and make joining
     // take several seconds longer than it should.
     // (ref https://github.com/redpanda-data/redpanda/issues/3030)
-    ss::future<> join_cluster();
+    void join_cluster_async();
 
     // Stop this manager. Only prevents new update requests; pending updates in
     // the queue are aborted separately.
@@ -141,15 +141,15 @@ public:
     ss::future<std::vector<node_update>> get_node_updates();
 
 private:
-    using seed_iterator = std::vector<config::seed_server>::const_iterator;
     // Cluster join
     void join_raft0();
     bool is_already_member() const;
 
     ss::future<> initialize_broker_connection(const model::broker&);
 
-    ss::future<result<join_node_reply>> dispatch_join_to_seed_server(
-      seed_iterator it, join_node_request const& req);
+    ss::future<result<join_node_reply>>
+    attempt_join_to_seed_servers(const join_node_request&);
+
     ss::future<result<join_node_reply>> dispatch_join_to_remote(
       const config::seed_server&, join_node_request&& req);
 

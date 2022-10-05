@@ -1444,7 +1444,7 @@ void application::start_redpanda(::stop_signal& app_signal) {
     controller->get_members_manager()
       .invoke_on(
         cluster::members_manager::shard,
-        &cluster::members_manager::join_cluster)
+        &cluster::members_manager::join_cluster_async)
       .get();
 
     if (archival_storage_enabled()) {
