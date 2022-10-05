@@ -35,6 +35,10 @@ struct cluster_bootstrap_info_reply
     using rpc_adl_exempt = std::true_type;
 
     // TODO: add fields!
+    // - node UUID?
+    // - logical version of the node
+    // - seed servers list
+    // - empty_seed_starts_cluster value
 
     auto serde_fields() { return std::tie(); }
 
