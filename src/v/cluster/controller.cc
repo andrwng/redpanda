@@ -135,7 +135,7 @@ ss::future<> controller::start(
       })
       .then([this, stored_cluster_uuid] {
           return _bootstrap_backend.start_single(
-            stored_cluster_uuid, std::ref(_storage));
+            stored_cluster_uuid, std::ref(_credentials), std::ref(_storage));
       })
       .then([this] {
           return _config_frontend.start(
@@ -438,6 +438,8 @@ ss::future<> controller::create_cluster() {
     bootstrap_cluster_cmd_data cmd_data;
     cmd_data.uuid = cluster_uuid(
       uuid_t(boost::uuids::random_generator_mt19937()()));
+    cmd_data.bootstrap_user_cred
+      = security_frontend::get_bootstrap_user_creds_from_env();
     vlog(clusterlog.info, "Creating cluster {}", cmd_data.uuid);
 
     // cluster::replicate_and_wait() cannot be used here because it checks
