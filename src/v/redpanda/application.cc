@@ -1391,7 +1391,7 @@ void application::wire_up_and_start(::stop_signal& app_signal, bool test_mode) {
     // ID. A valid node ID is required before we can initialize the rest of our
     // subsystems.
     const auto& node_uuid = storage.local().node_uuid();
-    cluster::cluster_discovery cd(node_uuid);
+    cluster::cluster_discovery cd(node_uuid, storage.local().kvs());
     auto node_id = cd.determine_node_id().get();
     if (config::node().node_id() == std::nullopt) {
         // If we previously didn't have a node ID, set it in the config. We

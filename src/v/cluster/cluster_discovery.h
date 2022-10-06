@@ -19,6 +19,10 @@
 #include <optional>
 #include <vector>
 
+namespace storage {
+class kvstore;
+} // namespace storage
+
 namespace cluster {
 
 // Provides metadata pertaining to initial cluster discovery. It is the
@@ -56,7 +60,8 @@ namespace cluster {
 // TODO: reconcile the RPC dispatch logic here with that in members_manager.
 class cluster_discovery {
 public:
-    explicit cluster_discovery(const model::node_uuid& node_uuid);
+    cluster_discovery(
+      const model::node_uuid& node_uuid, storage::kvstore& kvstore);
 
     // Determines what the node ID for this node should be. Once called, we can
     // proceed with initializing anything that depends on node ID (Raft
@@ -101,6 +106,7 @@ private:
     simple_time_jitter<model::timeout_clock> _join_retry_jitter;
     const std::chrono::milliseconds _join_timeout;
 
+    storage::kvstore& _kvstore;
 };
 
 } // namespace cluster
