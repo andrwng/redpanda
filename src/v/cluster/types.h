@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "cluster/cluster_uuid.h"
 #include "cluster/errc.h"
 #include "cluster/fwd.h"
 #include "kafka/types.h"
@@ -1937,6 +1938,20 @@ struct feature_update_license_update_cmd_data
 
     friend std::ostream&
     operator<<(std::ostream&, const feature_update_license_update_cmd_data&);
+};
+
+struct bootstrap_cluster_cmd_data
+  : serde::envelope<bootstrap_cluster_cmd_data, serde::version<0>> {
+    using rpc_adl_exempt = std::true_type;
+    static constexpr int8_t current_version = 0;
+
+    friend bool operator==(
+      const bootstrap_cluster_cmd_data&, const bootstrap_cluster_cmd_data&)
+      = default;
+
+    auto serde_fields() { return std::tie(uuid); }
+
+    cluster_uuid uuid;
 };
 
 enum class reconciliation_status : int8_t {

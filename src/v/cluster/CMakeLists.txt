@@ -121,6 +121,8 @@ v_cc_library(
     node_status_backend.cc
     node_status_rpc_handler.cc
     bootstrap_service.cc
+    cluster_uuid.cc
+    bootstrap_backend.cc
   DEPS
     Seastar::seastar
     bootstrap_rpc
