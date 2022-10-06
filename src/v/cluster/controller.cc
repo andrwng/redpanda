@@ -99,8 +99,9 @@ ss::future<> controller::wire_up() {
       .then([this] { _probe.start(); });
 }
 
-ss::future<>
-controller::start(std::vector<model::broker> initial_raft0_brokers) {
+ss::future<> controller::start(
+  std::vector<model::broker> initial_raft0_brokers,
+  const std::optional<cluster_uuid>& stored_cluster_uuid) {
     return create_raft0(
              _partition_manager,
              _shard_table,
@@ -129,9 +130,9 @@ controller::start(std::vector<model::broker> initial_raft0_brokers) {
       .then([this] {
           return _feature_backend.start_single(std::ref(_feature_table));
       })
-      .then([this] {
+      .then([this, stored_cluster_uuid] {
           return _bootstrap_backend.start_single(
-            std::nullopt /*TODO:integrate*/, std::ref(_storage));
+            stored_cluster_uuid, std::ref(_storage));
       })
       .then([this] {
           return _config_frontend.start(

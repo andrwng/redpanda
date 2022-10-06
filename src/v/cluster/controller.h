@@ -118,7 +118,15 @@ public:
 
     ss::future<> wire_up();
 
-    ss::future<> start(std::vector<model::broker>);
+    /**
+     * Create raft0, and start the services that the \c controller owns.
+     * \param stored_cluster_uuid Cluster UUID as it appears in the kvstore,
+     *      or empty if it does not.
+     */
+    ss::future<> start(
+      std::vector<model::broker>,
+      const std::optional<cluster_uuid>& stored_cluster_uuid);
+
     // prevents controller from accepting new requests
     ss::future<> shutdown_input();
     ss::future<> stop();
@@ -127,6 +135,7 @@ private:
     friend controller_probe;
 
     ss::future<> cluster_creation_hook();
+
     config_manager::preload_result _config_preload;
 
     ss::sharded<ss::abort_source> _as;                     // instance per core
