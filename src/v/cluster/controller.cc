@@ -98,7 +98,7 @@ ss::future<> controller::wire_up() {
       .then([this] { _probe.start(); });
 }
 
-ss::future<> controller::start() {
+ss::future<> controller::start(joiner_ptr cluster_joiner) {
     std::vector<model::broker> initial_raft0_brokers;
     if (config::node().seed_servers().empty()) {
         initial_raft0_brokers.push_back(
@@ -113,9 +113,10 @@ ss::future<> controller::start() {
       .then([this] { return _partition_leaders.start(std::ref(_tp_state)); })
       .then(
         [this] { return _drain_manager.start(std::ref(_partition_manager)); })
-      .then([this] {
+      .then([this, &cluster_joiner] {
           return _members_manager.start_single(
             _raft0,
+            cluster_joiner,
             std::ref(_members_table),
             std::ref(_connections),
             std::ref(_partition_allocator),

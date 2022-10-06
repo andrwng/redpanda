@@ -26,6 +26,59 @@
 
 namespace cluster {
 
+class members_manager;
+
+class cluster_joiner {
+public:
+    cluster_joiner(ss::sharded<rpc::connection_cache>&, ss::abort_source&);
+    // Sends a join RPC if we aren't already a member, else sends a node
+    // configuration update if our local state differs from that stored in the
+    // members table.
+    //
+    // This is separate to start() so that calling it can be delayed until
+    // after our internal RPC listener is up: as soon as we send a join
+    // message, the controller leader will expect us to be listening for its
+    // raft messages, and if we're not ready it'll back off and make joining
+    // take several seconds longer than it should.
+    // (ref https://github.com/redpanda-data/redpanda/issues/3030)
+    void join_cluster_async(members_manager*);
+
+    ss::future<> stop() { return _gate.close(); }
+
+private:
+    friend class members_manager;
+
+    // Cluster join
+    bool is_already_member(members_manager&) const;
+
+    ss::future<result<join_node_reply>> dispatch_join_to_remote(
+      const net::unresolved_address&, join_node_request&& req);
+
+    ss::future<result<configuration_update_reply>>
+      do_dispatch_configuration_update(model::broker, model::broker);
+
+    // The methods below dispatch RPCs to remote servers, calling appropriate
+    // local handlers if the target server is this server.
+
+    ss::future<result<join_node_reply>>
+    attempt_join_to_seed_servers(members_manager&, const join_node_request&);
+    ss::future<> maybe_update_current_node_configuration(members_manager&);
+    ss::future<> dispatch_configuration_update(members_manager&, model::broker);
+
+    const std::vector<config::seed_server> _seed_servers;
+    const model::broker _self;
+    simple_time_jitter<model::timeout_clock> _join_retry_jitter;
+    const std::chrono::milliseconds _join_timeout;
+    ss::sharded<rpc::connection_cache>& _connection_cache;
+
+    ss::abort_source& _as;
+
+    const config::tls_config _rpc_tls_config;
+
+    // Gate with which to guard new work (e.g. if stop() has been called).
+    ss::gate _gate;
+};
+
 // Implementation of a raft::mux_state_machine that is responsible for
 // updating information about cluster members, joining the cluster, updating
 // member states, and creating intra-cluster connections.
@@ -85,6 +138,7 @@ public:
 
     members_manager(
       consensus_ptr,
+      joiner_ptr,
       ss::sharded<members_table>&,
       ss::sharded<rpc::connection_cache>&,
       ss::sharded<partition_allocator>&,
@@ -97,18 +151,6 @@ public:
 
     // Initializes connections to all known members.
     ss::future<> start();
-
-    // Sends a join RPC if we aren't already a member, else sends a node
-    // configuration update if our local state differs from that stored in the
-    // members table.
-    //
-    // This is separate to start() so that calling it can be delayed until
-    // after our internal RPC listener is up: as soon as we send a join
-    // message, the controller leader will expect us to be listening for its
-    // raft messages, and if we're not ready it'll back off and make joining
-    // take several seconds longer than it should.
-    // (ref https://github.com/redpanda-data/redpanda/issues/3030)
-    void join_cluster_async();
 
     // Stop this manager. Only prevents new update requests; pending updates in
     // the queue are aborted separately.
@@ -141,31 +183,14 @@ public:
     ss::future<std::vector<node_update>> get_node_updates();
 
 private:
-    // Cluster join
-    void join_raft0();
-    bool is_already_member() const;
+    friend class cluster_joiner;
 
     ss::future<> initialize_broker_connection(const model::broker&);
-
-    ss::future<result<join_node_reply>>
-    attempt_join_to_seed_servers(const join_node_request&);
-
-    ss::future<result<join_node_reply>> dispatch_join_to_remote(
-      const config::seed_server&, join_node_request&& req);
-
-    ss::future<join_node_reply> dispatch_join_request();
-    template<typename Func>
-    auto dispatch_rpc_to_leader(rpc::clock_type::duration, Func&& f);
 
     // Raft 0 config updates
     ss::future<>
       handle_raft0_cfg_update(raft::group_configuration, model::offset);
     ss::future<> update_connections(patch<broker_ptr>);
-
-    ss::future<> maybe_update_current_node_configuration();
-    ss::future<> dispatch_configuration_update(model::broker);
-    ss::future<result<configuration_update_reply>>
-      do_dispatch_configuration_update(model::broker, model::broker);
 
     template<typename Cmd>
     ss::future<std::error_code> dispatch_updates_to_cores(model::offset, Cmd);
@@ -178,6 +203,7 @@ private:
     simple_time_jitter<model::timeout_clock> _join_retry_jitter;
     const std::chrono::milliseconds _join_timeout;
     const consensus_ptr _raft0;
+    const joiner_ptr _cluster_joiner;
     ss::sharded<members_table>& _members_table;
     ss::sharded<rpc::connection_cache>& _connection_cache;
 

@@ -92,6 +92,7 @@ public:
       md_dissemination_service;
     ss::sharded<kafka::coordinator_ntp_mapper> coordinator_ntp_mapper;
     ss::sharded<kafka::coordinator_ntp_mapper> co_coordinator_ntp_mapper;
+    cluster::joiner_ptr cluster_joiner;
     std::unique_ptr<cluster::controller> controller;
     ss::sharded<kafka::fetch_session_cache> fetch_session_cache;
     smp_groups smp_service_groups;

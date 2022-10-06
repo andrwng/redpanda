@@ -28,6 +28,7 @@
 #include <vector>
 
 namespace cluster {
+class cluster_joiner;
 class controller {
 public:
     controller(
@@ -118,7 +119,10 @@ public:
 
     ss::future<> wire_up();
 
-    ss::future<> start();
+    // Starts the controller, instantiating members with the given
+    // `cluster_joiner`.
+    ss::future<> start(joiner_ptr);
+
     // prevents controller from accepting new requests
     ss::future<> shutdown_input();
     ss::future<> stop();

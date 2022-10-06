@@ -39,6 +39,8 @@
 #include <optional>
 
 namespace cluster {
+class cluster_joiner;
+using joiner_ptr = ss::lw_shared_ptr<cluster_joiner>;
 using consensus_ptr = ss::lw_shared_ptr<raft::consensus>;
 using broker_ptr = ss::lw_shared_ptr<model::broker>;
 

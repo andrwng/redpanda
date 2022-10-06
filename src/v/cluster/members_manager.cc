@@ -41,8 +41,18 @@
 #include <system_error>
 namespace cluster {
 
+cluster_joiner::cluster_joiner(
+  ss::sharded<rpc::connection_cache>& connections, ss::abort_source& as)
+  : _seed_servers(config::node().seed_servers())
+  , _self(make_self_broker(config::node()))
+  , _join_retry_jitter(config::shard_local_cfg().join_retry_timeout_ms())
+  , _join_timeout(std::chrono::seconds(2))
+  , _connection_cache(connections)
+  , _as(as) {}
+
 members_manager::members_manager(
   consensus_ptr raft0,
+  joiner_ptr cluster_joiner,
   ss::sharded<members_table>& members_table,
   ss::sharded<rpc::connection_cache>& connections,
   ss::sharded<partition_allocator>& allocator,
@@ -53,7 +63,8 @@ members_manager::members_manager(
   , _self(make_self_broker(config::node()))
   , _join_retry_jitter(config::shard_local_cfg().join_retry_timeout_ms())
   , _join_timeout(std::chrono::seconds(2))
-  , _raft0(raft0)
+  , _raft0(std::move(raft0))
+  , _cluster_joiner(std::move(cluster_joiner))
   , _members_table(members_table)
   , _connection_cache(connections)
   , _allocator(allocator)
@@ -97,12 +108,13 @@ ss::future<> members_manager::start() {
     co_return;
 }
 
-bool members_manager::is_already_member() const {
-    return _raft0->config().contains_broker(_self.id());
+bool cluster_joiner::is_already_member(members_manager& mm) const {
+    return mm._raft0->config().contains_broker(_self.id());
 }
 
-ss::future<> members_manager::maybe_update_current_node_configuration() {
-    auto active_configuration = _raft0->config().find_broker(_self.id());
+ss::future<>
+cluster_joiner::maybe_update_current_node_configuration(members_manager& mm) {
+    auto active_configuration = mm._raft0->config().find_broker(_self.id());
     vassert(
       active_configuration.has_value(),
       "Current broker is expected to be present in members configuration");
@@ -116,7 +128,7 @@ ss::future<> members_manager::maybe_update_current_node_configuration() {
       "Redpanda broker configuration changed from {} to {}",
       active_configuration.value(),
       _self);
-    return dispatch_configuration_update(_self)
+    return dispatch_configuration_update(mm, _self)
       .then([] {
           vlog(clusterlog.info, "Node configuration updated successfully");
       })
@@ -361,11 +373,11 @@ wait_for_next_join_retry(std::chrono::milliseconds tout, ss::abort_source& as) {
       });
 }
 
-ss::future<result<join_node_reply>> members_manager::dispatch_join_to_remote(
-  const config::seed_server& target, join_node_request&& req) {
-    vlog(clusterlog.info, "Sending join request to {}", target.addr);
+ss::future<result<join_node_reply>> cluster_joiner::dispatch_join_to_remote(
+  const net::unresolved_address& addr, join_node_request&& req) {
+    vlog(clusterlog.info, "Sending join request to {}", addr);
     return do_with_client_one_shot<controller_client_protocol>(
-      target.addr,
+      addr,
       _rpc_tls_config,
       _join_timeout,
       [req = std::move(req), timeout = rpc::clock_type::now() + _join_timeout](
@@ -375,74 +387,48 @@ ss::future<result<join_node_reply>> members_manager::dispatch_join_to_remote(
       });
 }
 
-void members_manager::join_cluster_async() {
-    ssx::spawn_with_gate(_gate, [this]() -> ss::future<> {
-        if (is_already_member()) {
+void cluster_joiner::join_cluster_async(members_manager* mm) {
+    ssx::spawn_with_gate(_gate, [this, mm]() -> ss::future<> {
+        if (is_already_member(*mm)) {
             // If we're already in the cluster, dispatch a config update with
             // the latest node config.
-            co_return co_await maybe_update_current_node_configuration();
+            co_return co_await maybe_update_current_node_configuration(*mm);
         }
         vlog(clusterlog.debug, "Trying to join the cluster");
-        co_await ss::repeat([this]() -> ss::future<ss::stop_iteration> {
+        co_await ss::repeat([this, mm]() -> ss::future<ss::stop_iteration> {
             const join_node_request req{
               features::feature_table::get_latest_logical_version(), _self};
-            auto r = co_await attempt_join_to_seed_servers(req);
+            auto r = co_await attempt_join_to_seed_servers(*mm, req);
             auto success = r && r.value().success;
-            if (success || _gate.is_closed() || is_already_member()) {
+            if (success || _gate.is_closed() || is_already_member(*mm)) {
                 co_return ss::stop_iteration::yes;
             }
             co_await wait_for_next_join_retry(
               std::chrono::duration_cast<std::chrono::milliseconds>(
                 _join_retry_jitter.next_duration()),
-              _as.local());
+              _as);
             co_return ss::stop_iteration::no;
         });
         // Now that we've joined the cluster, make sure the config is
         // up-to-date.
-        co_return co_await maybe_update_current_node_configuration();
+        co_return co_await maybe_update_current_node_configuration(*mm);
     });
 }
 
 ss::future<result<join_node_reply>>
-members_manager::attempt_join_to_seed_servers(const join_node_request& req) {
+cluster_joiner::attempt_join_to_seed_servers(
+  members_manager& mm, const join_node_request& req) {
     using ret_t = result<join_node_reply>;
     for (const auto& it : _seed_servers) {
         auto r = it.addr == _self.rpc_address()
-                   ? co_await handle_join_request(req)
+                   ? co_await mm.handle_join_request(req)
                    : co_await dispatch_join_to_remote(
-                     it, join_node_request(req));
+                     it.addr, join_node_request(req));
         if (r && r.value().success) {
             co_return r;
         }
     }
     co_return ret_t(errc::seed_servers_exhausted);
-}
-
-template<typename Func>
-auto members_manager::dispatch_rpc_to_leader(
-  rpc::clock_type::duration connection_timeout, Func&& f) {
-    using inner_t = std::invoke_result_t<Func, controller_client_protocol>;
-    using fut_t = ss::futurize<result_wrap_t<inner_t>>;
-
-    std::optional<model::node_id> leader_id = _raft0->get_leader_id();
-    if (!leader_id) {
-        return fut_t::convert(errc::no_leader_controller);
-    }
-
-    auto leader = _raft0->config().find_broker(*leader_id);
-
-    if (!leader) {
-        return fut_t::convert(errc::no_leader_controller);
-    }
-
-    return with_client<controller_client_protocol, Func>(
-      _self.id(),
-      _connection_cache,
-      *leader_id,
-      leader->rpc_address(),
-      _rpc_tls_config,
-      connection_timeout,
-      std::forward<Func>(f));
 }
 
 ss::future<result<join_node_reply>>
@@ -515,15 +501,16 @@ members_manager::handle_join_request(join_node_request const req) {
               return ret_t(ec);
           });
     }
-    // Current node is not the leader have to send an RPC to leader
-    // controller
-    co_return co_await dispatch_rpc_to_leader(
-      _join_timeout,
-      [req, tout = rpc::clock_type::now() + _join_timeout](
-        controller_client_protocol c) mutable {
-          return c.join_node(join_node_request(req), rpc::client_opts(tout))
-            .then(&rpc::get_ctx_data<join_node_reply>);
-      })
+    std::optional<model::node_id> leader_id = _raft0->get_leader_id();
+    if (!leader_id) {
+        co_return ret_t(errc::no_leader_controller);
+    }
+    auto leader = _raft0->config().find_broker(*leader_id);
+    if (!leader) {
+        co_return ret_t(errc::no_leader_controller);
+    }
+    co_return co_await _cluster_joiner
+      ->dispatch_join_to_remote(leader->rpc_address(), join_node_request(req))
       .handle_exception([](const std::exception_ptr& e) {
           vlog(
             clusterlog.warn,
@@ -601,7 +588,7 @@ ss::future<> members_manager::validate_configuration_invariants() {
 }
 
 ss::future<result<configuration_update_reply>>
-members_manager::do_dispatch_configuration_update(
+cluster_joiner::do_dispatch_configuration_update(
   model::broker target, model::broker updated_cfg) {
     using ret_t = result<configuration_update_reply>;
     vlog(
@@ -652,24 +639,24 @@ model::broker get_update_request_target(
     return brokers[random_generators::get_int(brokers.size() - 1)];
 }
 
-ss::future<>
-members_manager::dispatch_configuration_update(model::broker broker) {
+ss::future<> cluster_joiner::dispatch_configuration_update(
+  members_manager& mm, model::broker broker) {
     // right after start current node has no information about the current
     // leader (it may never receive one as its addres might have been
     // changed), dispatch request to any cluster node, it will eventually
     // forward it to current leader
     bool update_success = false;
     while (!update_success) {
-        auto brokers = _raft0->config().brokers();
+        auto brokers = mm._raft0->config().brokers();
         auto target = get_update_request_target(
-          _raft0->get_leader_id(), brokers);
+          mm._raft0->get_leader_id(), brokers);
         auto r = target.id() == _self.id()
-                   ? co_await handle_configuration_update_request(
+                   ? co_await mm.handle_configuration_update_request(
                      configuration_update_request(broker, _self.id()))
                    : co_await do_dispatch_configuration_update(target, broker);
         if (r.has_error() || r.value().success == false) {
             co_await ss::sleep_abortable(
-              _join_retry_jitter.base_duration(), _as.local());
+              _join_retry_jitter.base_duration(), _as);
         } else {
             update_success = true;
         }
@@ -793,7 +780,8 @@ members_manager::handle_configuration_update_request(
         return ss::make_ready_future<ret_t>(errc::no_leader_controller);
     }
 
-    return do_dispatch_configuration_update(*(*leader), *node_ptr);
+    return _cluster_joiner->do_dispatch_configuration_update(
+      *(*leader), *node_ptr);
 }
 std::ostream&
 operator<<(std::ostream& o, const members_manager::node_update_type& tp) {

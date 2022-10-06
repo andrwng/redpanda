@@ -142,6 +142,10 @@ void application::shutdown() {
         _rpc.invoke_on_all(&net::server::shutdown_input).get();
     }
 
+    if (cluster_joiner) {
+        cluster_joiner->stop().get();
+    }
+
     // We schedule shutting down controller input and aborting its operation as
     // one of the first shutdown steps. This way we terminate all long running
     // operations before shutting down the RPC server, preventing it from
@@ -1280,6 +1284,9 @@ application::set_proxy_client_config(ss::sstring name, std::any val) {
 }
 
 void application::wire_up_and_start(::stop_signal& app_signal) {
+    cluster_joiner = ss::make_lw_shared<cluster::cluster_joiner>(
+      _connection_cache, app_signal.abort_source());
+
     wire_up_services();
     start_redpanda(app_signal);
 
@@ -1361,7 +1368,7 @@ void application::start_redpanda(::stop_signal& app_signal) {
     _co_group_manager.invoke_on_all(&kafka::group_manager::start).get();
 
     syschecks::systemd_message("Starting controller").get();
-    controller->start().get0();
+    controller->start(cluster_joiner).get0();
     kafka_group_migration = ss::make_lw_shared<kafka::group_metadata_migration>(
       *controller, group_router);
 
@@ -1441,11 +1448,8 @@ void application::start_redpanda(::stop_signal& app_signal) {
 
     // After we have started internal RPC listener, we may join
     // the cluster (if we aren't already a member)
-    controller->get_members_manager()
-      .invoke_on(
-        cluster::members_manager::shard,
-        &cluster::members_manager::join_cluster_async)
-      .get();
+    cluster_joiner->join_cluster_async(
+      &controller->get_members_manager().local());
 
     if (archival_storage_enabled()) {
         syschecks::systemd_message("Starting archival storage").get();
