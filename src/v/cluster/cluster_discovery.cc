@@ -27,11 +27,14 @@ using std::vector;
 namespace cluster {
 
 cluster_discovery::cluster_discovery(
-  const model::node_uuid& node_uuid, storage::kvstore& kvstore)
+  const model::node_uuid& node_uuid,
+  storage::kvstore& kvstore,
+  ss::abort_source& as)
   : _node_uuid(node_uuid)
   , _join_retry_jitter(config::shard_local_cfg().join_retry_timeout_ms())
-  , _join_timeout(std::chrono::seconds(2)) {}
-  , _kvstore(kvstore) {}
+  , _join_timeout(std::chrono::seconds(2))
+  , _kvstore(kvstore)
+  , _as(as) {}
 
 ss::future<node_id> cluster_discovery::determine_node_id() {
     // TODO: read from disk if empty.

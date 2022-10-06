@@ -61,7 +61,9 @@ namespace cluster {
 class cluster_discovery {
 public:
     cluster_discovery(
-      const model::node_uuid& node_uuid, storage::kvstore& kvstore);
+      const model::node_uuid& node_uuid,
+      storage::kvstore& kvstore,
+      ss::abort_source&);
 
     // Determines what the node ID for this node should be. Once called, we can
     // proceed with initializing anything that depends on node ID (Raft
@@ -107,6 +109,7 @@ private:
     const std::chrono::milliseconds _join_timeout;
 
     storage::kvstore& _kvstore;
+    ss::abort_source& _as;
 };
 
 } // namespace cluster
