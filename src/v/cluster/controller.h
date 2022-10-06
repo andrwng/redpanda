@@ -136,8 +136,8 @@ public:
 private:
     friend controller_probe;
 
-    ss::future<> cluster_creation_hook();
-
+    ss::future<> create_cluster();
+    ss::future<> cluster_creation_hook(bool local_node_is_seed_server);
     config_manager::preload_result _config_preload;
 
     ss::sharded<ss::abort_source> _as;                     // instance per core
