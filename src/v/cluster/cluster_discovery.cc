@@ -26,6 +26,19 @@ using std::vector;
 
 namespace cluster {
 
+namespace {
+
+void verify_duplicate_seed_servers() {
+    std::vector<config::seed_server> s = config::node().seed_servers();
+    std::sort(s.begin(), s.end());
+    const auto s_dupe_i = std::adjacent_find(s.cbegin(), s.cend());
+    if (s_dupe_i != s.cend())
+        throw std::runtime_error(fmt_with_ctx(
+          fmt::format, "Duplicate items in seed_servers: {}", *s_dupe_i));
+}
+
+} // namespace
+
 cluster_discovery::cluster_discovery(
   const model::node_uuid& node_uuid,
   storage::kvstore& kvstore,
@@ -34,7 +47,9 @@ cluster_discovery::cluster_discovery(
   , _join_retry_jitter(config::shard_local_cfg().join_retry_timeout_ms())
   , _join_timeout(std::chrono::seconds(2))
   , _kvstore(kvstore)
-  , _as(as) {}
+  , _as(as) {
+    verify_duplicate_seed_servers();
+}
 
 ss::future<node_id> cluster_discovery::determine_node_id() {
     // TODO: read from disk if empty.

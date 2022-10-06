@@ -120,11 +120,13 @@ public:
 
     /**
      * Create raft0, and start the services that the \c controller owns.
+     * \param initial_raft0_brokers Brokers to start raft0 with. Empty for
+     *      non-seeds.
      * \param stored_cluster_uuid Cluster UUID as it appears in the kvstore,
      *      or empty if it does not.
      */
     ss::future<> start(
-      std::vector<model::broker>,
+      std::vector<model::broker>&& initial_raft0_brokers,
       const std::optional<cluster_uuid>& stored_cluster_uuid);
 
     // prevents controller from accepting new requests

@@ -100,7 +100,7 @@ ss::future<> controller::wire_up() {
 }
 
 ss::future<> controller::start(
-  std::vector<model::broker> initial_raft0_brokers,
+  std::vector<model::broker>&& initial_raft0_brokers,
   const std::optional<cluster_uuid>& stored_cluster_uuid) {
     return create_raft0(
              _partition_manager,
