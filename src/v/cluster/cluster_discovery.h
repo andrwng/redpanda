@@ -24,6 +24,7 @@ class kvstore;
 } // namespace storage
 
 namespace cluster {
+struct cluster_bootstrap_info_reply;
 
 // Provides metadata pertaining to initial cluster discovery. It is the
 // entrypoint into the steps to join a cluster.
@@ -60,6 +61,8 @@ namespace cluster {
 // TODO: reconcile the RPC dispatch logic here with that in members_manager.
 class cluster_discovery {
 public:
+    using brokers = std::vector<model::broker>;
+
     cluster_discovery(
       const model::node_uuid& node_uuid,
       storage::kvstore& kvstore,
@@ -82,7 +85,7 @@ public:
     // created, returns an empty list.
     // In case of Emtpy Seed Cluster Bootstrap, that reflects to a list of the
     // root broker in root if cluster is not there yet, and empty otherwise.
-    std::vector<model::broker> initial_seed_brokers(bool cluster_exists) const;
+    ss::future<brokers> initial_seed_brokers(bool cluster_exists) const;
 
 private:
     // Returns index-based node_id if the local node is a founding member
@@ -99,6 +102,11 @@ private:
      * \throw vasserts if seed_servers is empty
      */
     static std::optional<int32_t> get_node_index_in_seed_servers();
+
+    ss::future<std::vector<model::broker>> request_seed_brokers() const;
+
+    ss::future<cluster_bootstrap_info_reply>
+      request_cluster_bootstrap_info(net::unresolved_address) const;
 
     // Sends requests to each seed server to register the local node UUID until
     // one succeeds. Upon success, sets `node_id` to the assigned node ID and

@@ -1497,7 +1497,7 @@ void application::start_runtime_services(
     syschecks::systemd_message("Starting controller").get();
     controller
       ->start(
-        cd.initial_seed_brokers(stored_cluster_uuid.has_value()),
+        cd.initial_seed_brokers(stored_cluster_uuid.has_value()).get(),
         stored_cluster_uuid)
       .get0();
     kafka_group_migration = ss::make_lw_shared<kafka::group_metadata_migration>(
