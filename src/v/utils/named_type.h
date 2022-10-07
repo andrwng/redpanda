@@ -137,6 +137,11 @@ public:
     explicit base_named_type(type&& v)
       : _value(std::move(v)) {}
 
+    template<typename... Args>
+    static base_named_type from(Args&&... args) {
+        return base_named_type(T(std::forward<Args>(args)...));
+    }
+
     base_named_type(base_named_type&& o) noexcept(move_noexcept) = default;
 
     base_named_type& operator=(base_named_type&& o) noexcept(move_noexcept)
