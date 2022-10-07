@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "cluster/bootstrap_backend.h"
 #include "cluster/config_manager.h"
 #include "cluster/data_policy_manager.h"
 #include "cluster/feature_backend.h"
@@ -29,7 +30,8 @@ using controller_stm = raft::mux_state_machine<
   members_manager,
   data_policy_manager,
   config_manager,
-  feature_backend>;
+  feature_backend,
+  bootstrap_backend>;
 
 static constexpr ss::shard_id controller_stm_shard = 0;
 

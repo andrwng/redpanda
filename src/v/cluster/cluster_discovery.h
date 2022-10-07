@@ -24,6 +24,7 @@ class kvstore;
 } // namespace storage
 
 namespace cluster {
+struct cluster_bootstrap_info_reply;
 
 // Provides metadata pertaining to initial cluster discovery. It is the
 // entrypoint into the steps to join a cluster.
@@ -60,6 +61,8 @@ namespace cluster {
 // TODO: reconcile the RPC dispatch logic here with that in members_manager.
 class cluster_discovery {
 public:
+    using brokers = std::vector<model::broker>;
+
     cluster_discovery(
       const model::node_uuid& node_uuid,
       storage::kvstore& kvstore,
@@ -74,29 +77,36 @@ public:
     // assign it a node ID.
     ss::future<model::node_id> determine_node_id();
 
-    // If configured as the root, return this broker as the sole initial Raft0
-    // broker.
-    //
-    // TODO: implement the below behavior.
-    //
     // Returns brokers to be used to form a Raft group for a new cluster.
     //
-    // If this node is a seed server, returns all seed servers, assuming seeds
-    // are configured with identical seed servers.
-    //
-    // If this node is not a seed server returns an empty list.
-    std::vector<model::broker> initial_raft0_brokers() const;
+    // If this node is a cluster founder, returns all seed servers, assuming
+    // all founders are configured with identical seed servers list.
+    // If this node is not a cluster founder, or if a cluster has already been
+    // created, returns an empty list.
+    // In case of Emtpy Seed Cluster Bootstrap, that reflects to a list of the
+    // root broker in root if cluster is not there yet, and empty otherwise.
+    ss::future<brokers> initial_seed_brokers(bool cluster_exists) const;
 
 private:
-    // Returns whether this node is the root node.
-    //
-    // TODO: implement the below behavior.
-    //
-    // Returns true if the local node is a founding member of the cluster, as
-    // indicated by either us having an empty seed server (we are the root node
-    // in a legacy config) or our node UUID matching one of those returned by
-    // the seed servers.
-    bool is_cluster_founder() const;
+    // Returns index-based node_id if the local node is a founding member
+    // of the cluster, as indicated by either us having an empty seed server
+    // (we are the root node in a legacy config), or our node IP listed
+    // as one of the seed servers.
+    static std::optional<model::node_id> get_cluster_founder_node_id();
+
+    /**
+     * Search for the current node's advertised RPC address in the seed_servers.
+     * Precondition: emtpy_seed_starts_cluster=false
+     * \return Index of this node in seed_servers list if found, or empty if
+     * not.
+     * \throw vasserts if seed_servers is empty
+     */
+    static std::optional<int32_t> get_node_index_in_seed_servers();
+
+    ss::future<std::vector<model::broker>> request_seed_brokers() const;
+
+    ss::future<cluster_bootstrap_info_reply>
+      request_cluster_bootstrap_info(net::unresolved_address) const;
 
     // Sends requests to each seed server to register the local node UUID until
     // one succeeds. Upon success, sets `node_id` to the assigned node ID and
