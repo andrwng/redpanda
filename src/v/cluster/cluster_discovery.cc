@@ -166,18 +166,23 @@ cluster_discovery::request_cluster_bootstrap_info(
     cluster_bootstrap_info_reply reply;
     co_await ss::repeat(
       ss::coroutine::lambda([&reply, addr]() -> ss::future<ss::stop_iteration> {
-          auto reply_result = co_await do_with_client_one_shot<
-            cluster_bootstrap_client_protocol>(
-            addr,
-            config::node().rpc_server_tls(),
-            2s,
-            [](cluster_bootstrap_client_protocol c) {
-                return c
-                  .cluster_bootstrap_info(
-                    cluster_bootstrap_info_request{},
-                    rpc::client_opts(rpc::clock_type::now() + 2s))
-                  .then(&rpc::get_ctx_data<cluster_bootstrap_info_reply>);
-            });
+          result<cluster_bootstrap_info_reply> reply_result(std::errc::connection_refused);
+          try {
+              reply_result = co_await do_with_client_one_shot<
+                cluster_bootstrap_client_protocol>(
+                addr,
+                config::node().rpc_server_tls(),
+                2s,
+                [](cluster_bootstrap_client_protocol c) {
+                    return c
+                      .cluster_bootstrap_info(
+                        cluster_bootstrap_info_request{},
+                        rpc::client_opts(rpc::clock_type::now() + 2s))
+                      .then(&rpc::get_ctx_data<cluster_bootstrap_info_reply>);
+                });
+            } catch (...) {
+                co_return ss::stop_iteration::no;
+            }
           if (reply_result) {
               reply = std::move(reply_result.value());
               co_return ss::stop_iteration::yes;
