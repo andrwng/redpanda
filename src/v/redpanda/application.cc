@@ -19,6 +19,7 @@
 #include "cluster/bootstrap_service.h"
 #include "cluster/cluster_discovery.h"
 #include "cluster/cluster_utils.h"
+#include "cluster/cluster_uuid.h"
 #include "cluster/controller.h"
 #include "cluster/fwd.h"
 #include "cluster/id_allocator.h"
@@ -1401,7 +1402,14 @@ void application::wire_up_and_start(::stop_signal& app_signal, bool test_mode) {
           std::make_optional<model::node_id>(node_id));
     }
 
-    vlog(_log.info, "Starting Redpanda with node_id {}", node_id);
+    const auto cluster_uuid = cluster::read_stored_cluster_uuid(
+      storage.local());
+
+    vlog(
+      _log.info,
+      "Starting Redpanda with node_id {}, cluster UUID {}",
+      node_id,
+      cluster_uuid);
 
     wire_up_runtime_services(node_id);
 
@@ -1416,7 +1424,7 @@ void application::wire_up_and_start(::stop_signal& app_signal, bool test_mode) {
           .get();
     }
 
-    start_runtime_services(cd, app_signal);
+    start_runtime_services(app_signal, cd, cluster_uuid);
 
     if (_proxy_config) {
         _proxy.invoke_on_all(&pandaproxy::rest::proxy::start).get();
@@ -1443,8 +1451,9 @@ void application::wire_up_and_start(::stop_signal& app_signal, bool test_mode) {
 }
 
 void application::start_runtime_services(
-  const cluster::cluster_discovery& cluster_discovery,
-  ::stop_signal& app_signal) {
+  ::stop_signal& app_signal,
+  const cluster::cluster_discovery& cd,
+  const std::optional<cluster::cluster_uuid>& stored_cluster_uuid) {
     ssx::background = _feature_table.invoke_on_all(
       [this](features::feature_table& ft) -> ss::future<> {
           try {
@@ -1485,8 +1494,29 @@ void application::start_runtime_services(
     _group_manager.invoke_on_all(&kafka::group_manager::start).get();
     _co_group_manager.invoke_on_all(&kafka::group_manager::start).get();
 
+    // Initialize the Raft RPC endpoint before the rest of the runtime RPC
+    // services so the cluster seeds can elect a leader and write a cluster
+    // UUID before proceeding with the rest of bootstrap.
+    _rpc
+      .invoke_on_all([this](rpc::rpc_server& s) {
+          std::vector<std::unique_ptr<rpc::service>> runtime_services;
+          runtime_services.push_back(
+            std::make_unique<
+              raft::service<cluster::partition_manager, cluster::shard_table>>(
+              _scheduling_groups.raft_sg(),
+              smp_service_groups.raft_smp_sg(),
+              partition_manager,
+              shard_table.local(),
+              config::shard_local_cfg().raft_heartbeat_interval_ms()));
+          s.add_services(std::move(runtime_services));
+      })
+      .get();
     syschecks::systemd_message("Starting controller").get();
-    controller->start(cluster_discovery.initial_raft0_brokers()).get0();
+    controller
+      ->start(
+        cd.initial_seed_brokers(stored_cluster_uuid.has_value()).get(),
+        stored_cluster_uuid)
+      .get0();
     kafka_group_migration = ss::make_lw_shared<kafka::group_metadata_migration>(
       *controller, group_router);
 
@@ -1513,14 +1543,6 @@ void application::start_runtime_services(
             std::ref(tx_gateway_frontend),
             _rm_group_proxy.get(),
             std::ref(rm_partition_frontend)));
-          runtime_services.push_back(
-            std::make_unique<
-              raft::service<cluster::partition_manager, cluster::shard_table>>(
-              _scheduling_groups.raft_sg(),
-              smp_service_groups.raft_smp_sg(),
-              partition_manager,
-              shard_table.local(),
-              config::shard_local_cfg().raft_heartbeat_interval_ms()));
           runtime_services.push_back(std::make_unique<cluster::service>(
             _scheduling_groups.cluster_sg(),
             smp_service_groups.cluster_smp_sg(),

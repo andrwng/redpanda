@@ -581,6 +581,12 @@ class RedpandaService(Service):
         # stash a copy here so that we can quickly look up e.g. addresses later.
         self._node_configs = {}
 
+        self._seed_servers = [self.nodes[0]]
+
+    def set_seed_servers(self, node_list):
+        assert len(node_list) > 0
+        self._seed_servers = node_list
+
     def set_environment(self, environment: dict[str, str]):
         self._environment = environment
 
@@ -742,7 +748,8 @@ class RedpandaService(Service):
               start_si=True,
               parallel: bool = True,
               expect_fail: bool = False,
-              auto_assign_node_id: bool = False):
+              auto_assign_node_id: bool = False,
+              omit_seeds_on_idx_one: bool = True):
         """
         Start the service on all nodes.
 
@@ -798,7 +805,8 @@ class RedpandaService(Service):
             self.start_node(node,
                             first_start=first_start,
                             expect_fail=expect_fail,
-                            auto_assign_node_id=auto_assign_node_id)
+                            auto_assign_node_id=auto_assign_node_id,
+                            omit_seeds_on_idx_one=omit_seeds_on_idx_one)
 
         self._for_nodes(to_start, start_one, parallel=parallel)
 
@@ -1003,7 +1011,8 @@ class RedpandaService(Service):
                    write_config=True,
                    first_start=False,
                    expect_fail: bool = False,
-                   auto_assign_node_id: bool = False):
+                   auto_assign_node_id: bool = False,
+                   omit_seeds_on_idx_one: bool = True):
         """
         Start a single instance of redpanda. This function will not return until
         redpanda appears to have started successfully. If redpanda does not
@@ -1014,9 +1023,11 @@ class RedpandaService(Service):
         node.account.mkdirs(os.path.dirname(RedpandaService.NODE_CONFIG_FILE))
 
         if write_config:
-            self.write_node_conf_file(node,
-                                      override_cfg_params,
-                                      auto_assign_node_id=auto_assign_node_id)
+            self.write_node_conf_file(
+                node,
+                override_cfg_params,
+                auto_assign_node_id=auto_assign_node_id,
+                omit_seeds_on_idx_one=omit_seeds_on_idx_one)
 
         if timeout is None:
             timeout = self.node_ready_timeout_s
@@ -1554,7 +1565,8 @@ class RedpandaService(Service):
     def write_node_conf_file(self,
                              node,
                              override_cfg_params=None,
-                             auto_assign_node_id=False):
+                             auto_assign_node_id=False,
+                             omit_seeds_on_idx_one=True):
         """
         Write the node config file for a redpanda node: this is the YAML representation
         of Redpanda's `node_config` class.  Distinct from Redpanda's _cluster_ configuration
@@ -1562,8 +1574,11 @@ class RedpandaService(Service):
         """
         node_info = {self.idx(n): n for n in self.nodes}
 
+        include_seed_servers = True
         node_id = self.idx(node)
-        include_seed_servers = node_id > 1
+        if omit_seeds_on_idx_one and node_id == 1:
+            include_seed_servers = False
+
         if auto_assign_node_id:
             # Supply None so it's omitted from the config.
             node_id = None
@@ -1578,6 +1593,7 @@ class RedpandaService(Service):
                            nodes=node_info,
                            node_id=node_id,
                            include_seed_servers=include_seed_servers,
+                           seed_servers=self._seed_servers,
                            node_ip=node_ip,
                            kafka_alternate_port=self.KAFKA_ALTERNATE_PORT,
                            admin_alternate_port=self.ADMIN_ALTERNATE_PORT,
