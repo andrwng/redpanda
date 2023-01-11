@@ -399,18 +399,22 @@ ss::future<> log_manager::remove(model::ntp ntp) {
           // If this has happened, clean up all staging files so we can fully
           // remove the NTP directory.
           //
+          // It isn't necessarily problematic to get here since we can
+          // proceed with removal, but it points to a missing cleanup which
+          // can be problematic for users, as it needlessly consumes space.
+          // Log verbosely to make it easier to catch.
+          //
           // TODO: we should more consistently clean up the staging operations
           // to clean up after themselves on failure.
+          auto file_path = fmt::format("{}/{}", ntp_dir, de.name);
+          vlog(
+            stlog.error,
+            "Leftover staging file found: {}",
+            file_path);
           if (boost::algorithm::ends_with(de.name, ".staging")) {
-              // It isn't necessarily problematic to get here since we can
-              // proceed with removal, but it points to a missing cleanup which
-              // can be problematic for users, as it needlessly consumes space.
-              // Log verbosely to make it easier to catch.
-              auto file_path = fmt::format("{}/{}", ntp_dir, de.name);
-              vlog(
-                stlog.error,
-                "Leftover staging file found, removing: {}",
-                file_path);
+              // We don't expect to have to clean up anything, but if there's a
+              // staging file, it's safe to just remove. Err on the side of
+              // caution and leave behind anything else.
               return ss::remove_file(file_path);
           }
           return ss::make_ready_future<>();

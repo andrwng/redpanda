@@ -29,7 +29,6 @@
 #include "storage/types.h"
 #include "test_utils/async.h"
 #include "units.h"
-#include "utils/directory_walker.h"
 #include "utils/to_string.h"
 #include "vassert.h"
 
@@ -2625,20 +2624,7 @@ FIXTURE_TEST(write_truncate_compact, storage_test_fixture) {
     // Ensure we've cleaned up all our staging segments such that a removal of
     // the log results in nothing leftover.
     auto dir_path = log.config().work_directory();
-    try {
-        mgr.remove(ntp).get();
-    } catch (...) {
-        directory_walker walker;
-        walker
-          .walk(
-            dir_path,
-            [](const ss::directory_entry& de) {
-                info("Leftover file: {}", de.name);
-                return ss::make_ready_future<>();
-            })
-          .get();
-        throw;
-    }
+    mgr.remove(ntp).get();
     BOOST_REQUIRE_EQUAL(false, ss::file_exists(dir_path).get());
 };
 
