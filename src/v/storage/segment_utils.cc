@@ -125,12 +125,17 @@ ss::future<ss::file> make_writer_handle(
     }
     return make_handle(path, flags, writer_opts(), debug);
 }
+
 /// make file handle with default opts
 ss::future<ss::file> make_reader_handle(
-  const std::filesystem::path& path, storage::debug_sanitize_files debug) {
+  const std::filesystem::path& path, storage::debug_sanitize_files debug, should_create create) {
+  auto flags = ss::open_flags::ro;
+    if (create) {
+        flags |= ss::open_flags::create;
+    }
     return make_handle(
       path,
-      ss::open_flags::ro | ss::open_flags::create,
+      flags,
       ss::file_open_options{},
       debug);
 }
@@ -273,7 +278,7 @@ do_detect_compaction_index_state(segment_full_path p, compaction_config cfg) {
     if (!co_await(ss::file_exists(p.string()))) {
         co_return compacted_index::recovery_state::index_needs_rebuild;
     }
-    auto f = co_await make_reader_handle(p, cfg.sanitize);
+    auto f = co_await make_reader_handle(p, cfg.sanitize, should_create::no);
     auto reader = make_file_backed_compacted_reader(p, std::move(f), cfg.iopc, 64_KiB);
     try {
         co_return co_await reader.verify_integrity()
@@ -326,7 +331,7 @@ ss::future<> do_compact_segment_index(
   storage_resources& resources) {
     auto compacted_path = s->reader().path().to_compacted_index();
     vlog(gclog.trace, "compacting segment compaction index:{}", compacted_path);
-    return make_reader_handle(compacted_path, cfg.sanitize)
+    return make_reader_handle(compacted_path, cfg.sanitize, should_create::no)
       .then([cfg, compacted_path, s, &resources](ss::file f) {
           auto reader = make_file_backed_compacted_reader(
             compacted_path, std::move(f), cfg.iopc, 64_KiB);
@@ -340,7 +345,7 @@ ss::future<storage::index_state> do_copy_segment_data(
   ss::rwlock::holder h,
   storage_resources& resources) {
     auto idx_path = s->reader().path().to_compacted_index();
-    return make_reader_handle(idx_path, cfg.sanitize)
+    return make_reader_handle(idx_path, cfg.sanitize, should_create::no)
       .then([s, cfg, idx_path](ss::file f) {
           auto reader = make_file_backed_compacted_reader(
             idx_path, std::move(f), cfg.iopc, 64_KiB);
@@ -715,7 +720,7 @@ ss::future<std::vector<compacted_index_reader>> make_indices_readers(
               f = seg->compaction_index().close();
           }
           return f.then([io_pc, sanitize, path]() {
-              return make_reader_handle(path, sanitize)
+              return make_reader_handle(path, sanitize, should_create::yes)
                 .then([path, io_pc](auto reader_fd) {
                     return make_file_backed_compacted_reader(
                       path, reader_fd, io_pc, 64_KiB);

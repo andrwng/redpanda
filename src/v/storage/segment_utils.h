@@ -94,9 +94,12 @@ ss::future<ss::file> make_writer_handle(
   const std::filesystem::path&,
   storage::debug_sanitize_files,
   bool truncate = false);
+
+using should_create = ss::bool_class<struct should_create_tag>;
+
 /// make file handle with default opts
 ss::future<ss::file>
-make_reader_handle(const std::filesystem::path&, storage::debug_sanitize_files);
+make_reader_handle(const std::filesystem::path&, storage::debug_sanitize_files, should_create);
 ss::future<ss::file> make_handle(
   const std::filesystem::path path,
   ss::open_flags flags,

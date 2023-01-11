@@ -123,7 +123,7 @@ ss::future<segment_reader_handle> segment_reader::get() {
     if (!_data_file) {
         vlog(stlog.debug, "Opening segment file {}", _path);
         _data_file = co_await internal::make_reader_handle(
-          std::filesystem::path(_path), _sanitize);
+          std::filesystem::path(_path), _sanitize, internal::should_create::yes);
     }
 
     _data_file_refcount++;
