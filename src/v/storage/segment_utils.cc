@@ -476,6 +476,10 @@ ss::future<std::optional<size_t>> do_self_compact_segment(
     }
 
     if (s->is_closed()) {
+        const ss::sstring staging_file = s->reader().path().to_staging();
+        if (co_await ss::file_exists(staging_file)) {
+            co_await ss::remove_file(staging_file);
+        }
         throw segment_closed_exception();
     }
 
