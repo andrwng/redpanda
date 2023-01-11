@@ -270,6 +270,9 @@ ss::future<> write_clean_compacted_index(
 ss::future<compacted_index::recovery_state>
 do_detect_compaction_index_state(segment_full_path p, compaction_config cfg) {
     using flags = compacted_index::footer_flags;
+    if (!co_await(ss::file_exists(p.string()))) {
+        co_return compacted_index::recovery_state::index_needs_rebuild;
+    }
     auto f = co_await make_reader_handle(p, cfg.sanitize);
     auto reader = make_file_backed_compacted_reader(p, std::move(f), cfg.iopc, 64_KiB);
     try {
