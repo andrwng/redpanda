@@ -270,38 +270,33 @@ ss::future<> write_clean_compacted_index(
 ss::future<compacted_index::recovery_state>
 do_detect_compaction_index_state(segment_full_path p, compaction_config cfg) {
     using flags = compacted_index::footer_flags;
-    return make_reader_handle(p, cfg.sanitize)
-      .then([cfg, p](ss::file f) {
-          return make_file_backed_compacted_reader(
-            p, std::move(f), cfg.iopc, 64_KiB);
-      })
-      .then([](compacted_index_reader reader) {
-          return reader.verify_integrity()
-            .then([reader]() mutable { return reader.load_footer(); })
-            .then([](compacted_index::footer footer) {
-                if (bool(footer.flags & flags::self_compaction)) {
-                    return compacted_index::recovery_state::already_compacted;
-                }
-                if (bool(footer.flags & flags::incomplete)) {
-                    return compacted_index::recovery_state::index_needs_rebuild;
-                }
-                return compacted_index::recovery_state::index_recovered;
-            })
-            .finally([reader]() mutable { return reader.close(); });
-      })
-      .handle_exception_type([](const compacted_index::needs_rebuild_error& e) {
-          vlog(stlog.info, "compacted index needs rebuild: {}", e);
-          return compacted_index::recovery_state::index_needs_rebuild;
-      })
-      .handle_exception([](std::exception_ptr e) {
-          vlog(
-            stlog.warn,
-            "detected error while attempting compacted index recovery, {}. "
-            "marking as 'needs rebuild'. Common situation during crashes or "
-            "hard shutdowns.",
-            e);
-          return compacted_index::recovery_state::index_needs_rebuild;
-      });
+    auto f = co_await make_reader_handle(p, cfg.sanitize);
+    auto reader = make_file_backed_compacted_reader(p, std::move(f), cfg.iopc, 64_KiB);
+    try {
+        co_return co_await reader.verify_integrity()
+          .then([reader]() mutable { return reader.load_footer(); })
+          .then([](compacted_index::footer footer) {
+              if (bool(footer.flags & flags::self_compaction)) {
+                  return compacted_index::recovery_state::already_compacted;
+              }
+              if (bool(footer.flags & flags::incomplete)) {
+                  return compacted_index::recovery_state::index_needs_rebuild;
+              }
+              return compacted_index::recovery_state::index_recovered;
+          })
+          .finally([reader]() mutable { return reader.close(); });
+    } catch (const compacted_index::needs_rebuild_error& e) {
+        vlog(stlog.info, "compacted index needs rebuild: {}", e);
+        co_return compacted_index::recovery_state::index_needs_rebuild;
+    } catch (const std::exception& e) {
+        vlog(
+          stlog.warn,
+          "detected error while attempting compacted index recovery, {}. "
+          "marking as 'needs rebuild'. Common situation during crashes or "
+          "hard shutdowns.",
+          e);
+        co_return compacted_index::recovery_state::index_needs_rebuild;
+    }
 }
 
 ss::future<compacted_index::recovery_state>
