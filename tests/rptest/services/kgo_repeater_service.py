@@ -164,7 +164,13 @@ class KgoRepeaterService(Service):
 
         def group_ready():
             rpk = RpkTool(self.redpanda)
-            group = rpk.group_describe(self.group_name, summary=True)
+            try:
+                # Ignore errors that may happen if the underlying node is
+                # unavailable or overwhelmed.
+                group = rpk.group_describe(self.group_name, summary=True)
+            except:
+                return False
+
             if group is None:
                 self.logger.debug(
                     f"group_ready: {self.group_name} got None from describe")
