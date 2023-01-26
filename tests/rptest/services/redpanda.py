@@ -449,7 +449,8 @@ class SISettings:
             conf[
                 'cloud_storage_segment_max_upload_interval_sec'] = self.cloud_storage_segment_max_upload_interval_sec
         if self.cloud_storage_housekeeping_interval_ms:
-            conf['cloud_storage_housekeeping_interval_ms'] = self.cloud_storage_housekeeping_interval_ms
+            conf[
+                'cloud_storage_housekeeping_interval_ms'] = self.cloud_storage_housekeeping_interval_ms
 
         return conf
 
