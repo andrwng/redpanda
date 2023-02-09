@@ -149,7 +149,7 @@ class ScaleParameters:
             # so the test doesn't take too much space on disk.
             self.local_retention_bytes = min(self.retention_bytes,
                                              self.segment_size * 24)
-            self.retention_bytes = -1
+            self.retention_bytes = 7 * 128 * self.segment_size
 
             # Set a max upload interval such that won't swamp S3 -- we should
             # already be uploading somewhat frequently given the segment size.
