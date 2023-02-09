@@ -891,6 +891,100 @@ class ManyPartitionsTest(PreallocNodesTest):
         # peak partition count.
         self._run_omb(scale)
 
+    @cluster(num_nodes=12, log_allow_list=RESTART_LOG_ALLOW_LIST)
+    def test_many_segments_test(self):
+        scale = ScaleParameters(self.redpanda,
+                                replication_factor=3,
+                                tiered_storage_enabled=True)
+        self.redpanda.start(parallel=True)
+        background_topic_name = "background_topic"
+        self.create_many_partitions(scale, 1, background_topic_name)
+        many_segments_topic_name = "many_segments"
+
+        # Use as many partitions are there are cores, so each core has at least
+        # one leader of this partition.
+        num_partitions = scale.num_nodes * scale.node_cpus
+        config = {
+            "segment.bytes": scale.segment_size,
+            "retention.bytes": scale.retention_bytes,
+            "retention.local.target.bytes": scale.local_retention_bytes,
+        }
+        self.rpk.create_topic(many_segments_topic_name,
+                              partitions=cluster_num_cpus,
+                              replicas=3,
+                              config=config)
+        self.logger.info(f"Awaiting elections...")
+        wait_until(lambda: self._all_elections_done([many_segments_topic_name],
+                                                    num_partitions),
+                   timeout_sec=60,
+                   backoff_sec=5)
+        self.logger.info(f"Initial elections done.")
+
+        # Our guidance is to not go above 8192 segments per partition, as going
+        # above this risks destabilizing traffic when serializing manifests to
+        # the cloud.
+        max_segments_per_replica = 8192
+        repeater_msg_size = 16 * 1024
+        total_data_size = num_partitions * max_segments_per_replica * scale.segment_size
+        with repeater_traffic(
+                context=self._ctx,
+                redpanda=self.redpanda,
+                nodes=self.preallocated_nodes[1:],
+                topic=background_topic_name,
+                msg_size=repeater_msg_size,
+                workers=1,
+                max_buffered_records=1,
+                cleanup=lambda: self.free_preallocated_nodes()) as repeater:
+            producer = KgoVerifierProducer(
+                self.test_context,
+                self.redpanda,
+                target_topic,
+                stress_msg_size,
+                stress_msg_count,
+                custom_node=[self.preallocated_nodes[0]])
+            producer.start()
+            producer.wait()
+
+    def create_many_partitions(self, scale, n_topics, topic_prefix="scale"):
+        """
+        Creates many partitions, spreading the partition limit across the given
+        number of topics.
+        """
+        # Partitions per topic
+        n_partitions = int(scale.partition_limit / n_topics)
+        self.logger.info("Entering topic creation")
+
+        topic_names = [f"{topic_prefix}_{i:06d}" for i in range(0, n_topics)]
+        for tn in topic_names:
+            self.logger.info(
+                f"Creating topic {tn} with {n_partitions} partitions")
+            config = {
+                'segment.bytes': scale.segment_size,
+                'retention.bytes': scale.retention_bytes
+            }
+            if scale.local_retention_bytes:
+                config[
+                    'retention.local.target.bytes'] = scale.local_retention_bytes
+
+            if compacted:
+                if scale.tiered_storage_enabled:
+                    config['cleanup.policy'] = 'compact,delete'
+                else:
+                    config['cleanup.policy'] = 'compact'
+            else:
+                config['cleanup.policy'] = 'delete'
+
+            self.rpk.create_topic(tn,
+                                  partitions=n_partitions,
+                                  replicas=replication_factor,
+                                  config=config)
+
+        self.logger.info(f"Awaiting elections...")
+        wait_until(lambda: self._all_elections_done(topic_names, n_partitions),
+                   timeout_sec=60,
+                   backoff_sec=5)
+        self.logger.info(f"Initial elections done.")
+
     def _test_many_partitions(self, compacted, tiered_storage_enabled=False):
         """
         Validate that redpanda works with partition counts close to its resource
@@ -954,38 +1048,7 @@ class ManyPartitionsTest(PreallocNodesTest):
         })
 
         self.redpanda.start(parallel=True)
-
-        self.logger.info("Entering topic creation")
-        topic_names = [f"scale_{i:06d}" for i in range(0, n_topics)]
-        for tn in topic_names:
-            self.logger.info(
-                f"Creating topic {tn} with {n_partitions} partitions")
-            config = {
-                'segment.bytes': scale.segment_size,
-                'retention.bytes': scale.retention_bytes
-            }
-            if scale.local_retention_bytes:
-                config[
-                    'retention.local.target.bytes'] = scale.local_retention_bytes
-
-            if compacted:
-                if tiered_storage_enabled:
-                    config['cleanup.policy'] = 'compact,delete'
-                else:
-                    config['cleanup.policy'] = 'compact'
-            else:
-                config['cleanup.policy'] = 'delete'
-
-            self.rpk.create_topic(tn,
-                                  partitions=n_partitions,
-                                  replicas=replication_factor,
-                                  config=config)
-
-        self.logger.info(f"Awaiting elections...")
-        wait_until(lambda: self._all_elections_done(topic_names, n_partitions),
-                   timeout_sec=60,
-                   backoff_sec=5)
-        self.logger.info(f"Initial elections done.")
+        self.create_many_partitions(scale, n_topics)
 
         for node_name, file_count in self._get_fd_counts():
             self.logger.info(
