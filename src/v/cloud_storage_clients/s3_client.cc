@@ -647,7 +647,7 @@ ss::future<> s3_client::do_put_object(
             .handle_exception_type(
               [](const ss::abort_requested_exception&) { return ss::now(); })
             .handle_exception_type([this](const rest_error_response& err) {
-                vlog(s3_log.warn, "S3 request failed with error: {}", err);
+                vlog(s3_log.warn, "S3 request failed with error: {}", err.what());
                 _probe->register_failure(err.code(), op_type_tag::upload);
                 return ss::make_exception_future<>(err);
             })

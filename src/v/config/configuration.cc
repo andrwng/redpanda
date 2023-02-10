@@ -1190,6 +1190,12 @@ configuration::configuration()
       "TLS port override",
       {.visibility = visibility::user},
       443)
+  , cloud_storage_duplicate_segment_meta(
+      *this,
+      "cloud_storage_duplicate_segment_meta",
+      "Number of times to serialize each segment",
+      {.visibility = visibility::tunable},
+      1)
   , cloud_storage_trust_file(
       *this,
       "cloud_storage_trust_file",

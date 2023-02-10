@@ -15,6 +15,7 @@
 #include "bytes/iostream.h"
 #include "cloud_storage/logger.h"
 #include "cloud_storage/types.h"
+#include "config/configuration.h"
 #include "hashing/xx.h"
 #include "json/document.h"
 #include "json/istreamwrapper.h"
@@ -1200,17 +1201,33 @@ ss::future<serialized_json_stream> partition_manifest::serialize() const {
     std::ostream os(&obuf);
     serialization_cursor_ptr c = make_cursor(os);
     serialize_begin(c);
-    while (!c->segments_done) {
-        serialize_segments(c);
-        co_await ss::maybe_yield();
-        if (iso != _insync_offset) {
-            throw std::runtime_error(fmt_with_ctx(
-              fmt::format,
-              "Manifest changed duing serialization, in sync offset moved from "
-              "{} to {}",
-              iso,
-              _insync_offset));
+    auto& w = c->writer;
+    if (!_segments.empty()) {
+        // The method is called first time
+        w.Key("segments");
+        w.StartObject();
+    }
+    auto serialize_meta_times = config::shard_local_cfg().cloud_storage_duplicate_segment_meta.value();
+    for (int i = 0; i < serialize_meta_times; i++) {
+        c->segments_done = false;
+        c->next_offset = _segments.begin()->second.base_offset;
+        while (!c->segments_done) {
+            serialize_segments(c);
+            co_await ss::maybe_yield();
+            if (iso != _insync_offset) {
+                throw std::runtime_error(fmt_with_ctx(
+                  fmt::format,
+                  "Manifest changed duing serialization, in sync offset moved from "
+                  "{} to {}",
+                  iso,
+                  _insync_offset));
+            }
         }
+        co_await ss::maybe_yield();
+    }
+    if (!_segments.empty()) {
+        // next_offset will overshoot by one
+        w.EndObject();
     }
     serialize_replaced(c);
     serialize_end(c);
@@ -1376,13 +1393,6 @@ void partition_manifest::serialize_segments(
         cursor->segments_done = true;
         return;
     }
-    auto& w = cursor->writer;
-    if (cursor->next_offset == model::offset{} && !_segments.empty()) {
-        // The method is called first time
-        w.Key("segments");
-        w.StartObject();
-        cursor->next_offset = _segments.begin()->second.base_offset;
-    }
     if (!_segments.empty()) {
         auto it = _segments.lower_bound(cursor->next_offset);
         for (; it != _segments.end(); it++) {
@@ -1406,7 +1416,6 @@ void partition_manifest::serialize_segments(
     }
     if (cursor->next_offset == _last_offset && !_segments.empty()) {
         // next_offset will overshoot by one
-        w.EndObject();
         cursor->segments_done = true;
     }
 }
