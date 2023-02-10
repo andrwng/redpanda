@@ -42,6 +42,8 @@ public:
 
     void uploaded_bytes(uint64_t bytes) { _uploaded_bytes += bytes; }
 
+    void uploaded_manifest_bytes(uint64_t bytes) { _uploaded_manifest_bytes += bytes; }
+
     /// Register gap
     void gap_detected(model::offset offset_delta) { _missing += offset_delta; }
 
@@ -59,8 +61,10 @@ public:
 private:
     /// Uploaded offsets
     uint64_t _uploaded = 0;
-    /// Total uploaded bytes
+    /// Total uploaded bytes for segment data
     uint64_t _uploaded_bytes = 0;
+    /// Total uploaded bytes for manifests
+    uint64_t _uploaded_manifest_bytes = 0;
     /// Missing offsets due to gaps
     int64_t _missing = 0;
     /// Width of the offset range yet to be uploaded

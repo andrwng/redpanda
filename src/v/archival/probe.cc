@@ -56,7 +56,13 @@ void ntp_level_probe::setup_ntp_metrics(const model::ntp& ntp) {
         sm::make_total_bytes(
           "uploaded_bytes",
           [this] { return _uploaded_bytes; },
-          sm::description("Total number of uploaded bytes"),
+          sm::description("Total number of bytes of non-compacted segment data uploaded"),
+          labels)
+          .aggregate(aggregate_labels),
+        sm::make_total_bytes(
+          "uploaded_manifest_bytes",
+          [this] { return _uploaded_bytes; },
+          sm::description("Total number of bytes of manifests uploaded"),
           labels)
           .aggregate(aggregate_labels),
         sm::make_counter(

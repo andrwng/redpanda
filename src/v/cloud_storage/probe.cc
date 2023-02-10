@@ -39,6 +39,10 @@ remote_probe::remote_probe(
               [this] { return get_partition_manifest_uploads(); },
               sm::description("Number of partition manifest (re)uploads")),
             sm::make_counter(
+              "partition_manifest_uploaded_bytes",
+              [this] { return get_partition_manifest_uploaded_bytes(); },
+              sm::description("Number of partition manifest (re)uploads")),
+            sm::make_counter(
               "topic_manifest_downloads",
               [this] { return get_topic_manifest_downloads(); },
               sm::description("Number of topic manifest downloads")),

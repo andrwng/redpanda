@@ -238,7 +238,7 @@ ss::future<upload_result> remote::upload_manifest(
             vlog(ctxlog.debug, "Successfuly uploaded manifest to {}", path);
             switch (manifest.get_manifest_type()) {
             case manifest_type::partition:
-                _probe.partition_manifest_upload();
+                _probe.partition_manifest_upload(size);
                 break;
             case manifest_type::topic:
                 _probe.topic_manifest_upload();

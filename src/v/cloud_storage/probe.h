@@ -47,11 +47,17 @@ public:
     }
 
     /// Register manifest (re)upload
-    void partition_manifest_upload() { _cnt_partition_manifest_uploads++; }
+    void partition_manifest_upload(size_t n) {
+        _cnt_partition_manifest_uploads++;
+        _cnt_bytes_partition_manifest_sent += n;
+    }
 
     /// Get manifest (re)upload
     uint64_t get_partition_manifest_uploads() const {
         return _cnt_partition_manifest_uploads;
+    }
+    uint64_t get_partition_manifest_uploaded_bytes() const {
+        return _cnt_bytes_partition_manifest_sent;
     }
 
     /// Register manifest download
@@ -189,6 +195,8 @@ private:
     uint64_t _cnt_tx_manifest_uploads{0};
     /// Number of tx-range manifest downloads
     uint64_t _cnt_tx_manifest_downloads{0};
+    /// Number of manifest bytes successfully sent to remote storage.
+    uint64_t _cnt_bytes_partition_manifest_sent{0};
 
     ss::metrics::metric_groups _metrics;
     ss::metrics::metric_groups _public_metrics;
