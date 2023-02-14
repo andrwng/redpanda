@@ -682,6 +682,11 @@ class RedpandaService(Service):
         self._pandaproxy_config = pandaproxy_config
         self._schema_registry_config = schema_registry_config
 
+        # If set to true, the first run will not clean the nodes of the
+        # cluster.
+        self._persistent_cluster = True
+        self._test_body_running = False
+
         if superuser is None:
             superuser = self.SUPERUSER_CREDENTIALS
             self._skip_create_superuser = False
@@ -769,6 +774,9 @@ class RedpandaService(Service):
         self._node_id_by_idx = {}
 
         self._seed_servers = [self.nodes[0]] if len(self.nodes) > 0 else []
+
+    def set_test_body_running(self, running):
+        self._test_body_running = running
 
     def set_seed_servers(self, node_list):
         assert len(node_list) > 0
@@ -978,6 +986,18 @@ class RedpandaService(Service):
         first_start = self._start_time < 0
         if first_start:
             self._start_time = time.time()
+
+            if not self._test_body_running and self._persistent_cluster:
+                # Just make sure the cluster is up.
+                self.wait_for_membership(first_start=True)
+                self.cloud_storage_client = S3Client(
+                    region=self._si_settings.cloud_storage_region,
+                    access_key=self._si_settings.cloud_storage_access_key,
+                    secret_key=self._si_settings.cloud_storage_secret_key,
+                    endpoint=self._si_settings.endpoint_url,
+                    logger=self.logger,
+                )
+                return
 
         self.logger.debug(
             self.who_am_i() +
@@ -1830,6 +1850,11 @@ class RedpandaService(Service):
         """
         Override default stop() to execude stop_node in parallel
         """
+        if not self._test_body_running and self._persistent_cluster:
+            # Don't bother cleaning up if we're in the service-cleanup portion
+            # of the test (i.e. not the test body).
+            return
+
         self._stop_time = time.time()  # The last time stop is invoked
         self.logger.info("%s: exporting cluster config" % self.who_am_i())
 

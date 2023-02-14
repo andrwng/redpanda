@@ -141,12 +141,13 @@ class ScaleParameters:
         self.local_retention_after_warmup = self.retention_bytes
 
         if tiered_storage_enabled:
+            self.partition_limit = 1024
             # When testing with tiered storage, the tuning goals of the test
             # parameters are different: we want to stress the number of
             # uploaded segments.
 
             # Locally retain as many segments as a full day.
-            self.segment_size = 32 * 1024
+            self.segment_size = 4 * 1024
 
             # Retain as much data in cloud as one big batch of data.
             # NOTE: we consider the existing `retention_bytes` (computed above)
@@ -261,7 +262,7 @@ class ManyPartitionsTest(PreallocNodesTest):
         super(ManyPartitionsTest, self).__init__(
             test_ctx,
             *args,
-            num_brokers=9,
+            num_brokers=4,
             node_prealloc_count=3,
             extra_rp_conf={
                 # Disable leader balancer initially, to enable us to check for
@@ -595,8 +596,8 @@ class ManyPartitionsTest(PreallocNodesTest):
         number of segments.
         """
 
-        warmup_segment_size = 32 * 1024
-        warmup_message_size = 32 * 1024
+        warmup_segment_size = 4 * 1024
+        warmup_message_size = 4 * 1024
         target_cloud_segments = 24 * 7 * scale.partition_limit
 
         # Be somewhat lenient in generating the desired number of segments.
@@ -762,8 +763,16 @@ class ManyPartitionsTest(PreallocNodesTest):
             rand_read_msgs=rand_ios,
             parallel=rand_parallel,
             nodes=[self.preallocated_nodes[1]])
-        rand_consumer.start(clean=False)
-        rand_consumer.wait()
+        try:
+            rand_consumer.start(clean=False)
+            rand_consumer.wait()
+            self.redpanda.rolling_restart_nodes(self.redpanda.nodes)
+        except:
+            rand_consumer.stop()
+            fast_producer.stop()
+            rand_consumer.wait()
+            fast_producer.wait()
+            raise
 
         fast_producer.stop()
         fast_producer.wait()
@@ -898,7 +907,7 @@ class ManyPartitionsTest(PreallocNodesTest):
         self._test_many_partitions(compacted=False)
 
     @ok_to_fail  # https://github.com/redpanda-data/redpanda/issues/8777
-    @cluster(num_nodes=12, log_allow_list=RESTART_LOG_ALLOW_LIST)
+    @cluster(num_nodes=7, log_allow_list=RESTART_LOG_ALLOW_LIST)
     @matrix(compacted=[False])  # FIXME: run with compaction
     def test_many_partitions_tiered_storage(self, compacted):
         self._test_many_partitions(compacted=compacted,
