@@ -16,7 +16,7 @@ from rptest.utils.si_utils import nodes_report_cloud_segments
 from rptest.utils.node_operations import NodeDecommissionWaiter
 from rptest.tests.prealloc_nodes import PreallocNodesTest
 from rptest.services.redpanda import RESTART_LOG_ALLOW_LIST, SISettings
-from rptest.services.kgo_verifier_services import KgoVerifierProducer
+from rptest.services.kgo_verifier_services import KgoVerifierProducer, KgoVerifierConsumerGroupConsumer
 
 
 class TieredStorageWithLoadTest(PreallocNodesTest):
@@ -29,7 +29,6 @@ class TieredStorageWithLoadTest(PreallocNodesTest):
     LEADER_BALANCER_PERIOD_MS = 30000
     topic_name = "tiered_storage_topic"
     small_segment_size = 4 * 1024
-    unavailable_timeout = 60
 
     def __init__(self, test_ctx, *args, **kwargs):
         self._ctx = test_ctx
@@ -58,14 +57,24 @@ class TieredStorageWithLoadTest(PreallocNodesTest):
         self.redpanda.set_si_settings(si_settings)
         self.rpk = RpkTool(self.redpanda)
 
+        if self.redpanda.dedicated_nodes:
+            self.unavailable_timeout = 60
+        else:
+            self.unavailable_timeout = 20
+
+
     def load_many_segments(self):
         unscaled_data_bps = int(1.7 * 1024 * 1024 * 1024)
         unscaled_num_partitions = 1024
         scaling_factor = 4 / 13
 
         data_bps = int(unscaled_data_bps * scaling_factor)  # ~0.53 GiB/s
-        num_partitions = int(unscaled_num_partitions * scaling_factor)  # 315
-        num_segments_per_partition = 1000
+        if self.redpanda.dedicated_nodes:
+            num_partitions = int(unscaled_num_partitions * scaling_factor)  # 315
+            num_segments_per_partition = 1000
+        else:
+            num_partitions = 128
+            num_segments_per_partition = 50
 
         config = {
             # Use a tiny segment size so we can generate many cloud segments
@@ -91,6 +100,9 @@ class TieredStorageWithLoadTest(PreallocNodesTest):
 
         target_cloud_segments = num_segments_per_partition * num_partitions
         producer = None
+        rate_limit_bps = None
+        if not self.redpanda.dedicated_nodes:
+            rate_limit_bps = 5 * 1024 * 1024
         try:
             producer = KgoVerifierProducer(
                 self.test_context,
@@ -98,6 +110,7 @@ class TieredStorageWithLoadTest(PreallocNodesTest):
                 self.topic_name,
                 self.small_segment_size,
                 int(2 * num_segments_per_partition * num_partitions),
+                rate_limit_bps=rate_limit_bps,
                 custom_node=[self.preallocated_nodes[0]])
             producer.start()
             wait_until(lambda: nodes_report_cloud_segments(self.redpanda,
@@ -111,19 +124,28 @@ class TieredStorageWithLoadTest(PreallocNodesTest):
 
         # Once some segments are generated, configure the topic to use more
         # realistic sizes.
-        retention_bytes = int(data_bps * 60 * 60 * 6 / num_partitions)
-        self.rpk.alter_topic_config(self.topic_name, 'retention.local.target.bytes', retention_bytes)
-        self.rpk.alter_topic_config(self.topic_name, 'segment.bytes', 512 * 1024 * 1024)
+        if self.redpanda.dedicated_nodes:
+            # 6 hours at our target throughput.
+            retention_bytes = int(data_bps * 60 * 60 * 6 / num_partitions)
+            self.rpk.alter_topic_config(self.topic_name, 'retention.local.target.bytes', retention_bytes)
+            self.rpk.alter_topic_config(self.topic_name, 'segment.bytes', 512 * 1024 * 1024)
+        else:
+            self.rpk.alter_topic_config(self.topic_name, 'retention.local.target.bytes', 2 * 1024 * 1024)
+            self.rpk.alter_topic_config(self.topic_name, 'segment.bytes', 1024 * 1024)
 
     @cluster(num_nodes=5, log_allow_list=RESTART_LOG_ALLOW_LIST)
     def test_restarts(self):
         # Generate a realistic number of segments per partition.
         self.load_many_segments()
         producer = None
+        consumer = None
         unscaled_data_bps = int(1.7 * 1024 * 1024 * 1024)
         scaling_factor = 4 / 13
 
-        data_bps = int(unscaled_data_bps * scaling_factor)  # ~0.53 GiB/s
+        if self.redpanda.dedicated_nodes:
+            data_bps = int(unscaled_data_bps * scaling_factor)  # ~0.53 GiB/s
+        else:
+            data_bps = 5 * 1024 * 1024
         try:
             producer = KgoVerifierProducer(
                 self.test_context,
@@ -132,11 +154,19 @@ class TieredStorageWithLoadTest(PreallocNodesTest):
                 msg_size=128 * 1024,
                 msg_count=5 * 1024 * 1024 * 1024 * 1024,
                 rate_limit_bps=data_bps,
-                custom_node=[self.preallocated_nodes[0]])
+                custom_node=self.preallocated_nodes)
             producer.start()
-            wait_until(lambda: producer.produce_status.acked > 10000,
+            wait_until(lambda: producer.produce_status.acked > 100,
                        timeout_sec=60,
                        backoff_sec=1.0)
+            consumer = KgoVerifierConsumerGroupConsumer(
+                    self.test_context,
+                    self.redpanda,
+                    self.topic_name,
+                    msg_size=128 * 1024,
+                    readers=1,
+                    nodes=self.preallocated_nodes)
+            consumer.start(clean=False)
 
             # Run a rolling restart.
             self.logger.info(f"Rolling restarting nodes")
@@ -159,12 +189,12 @@ class TieredStorageWithLoadTest(PreallocNodesTest):
             with FailureInjector(self.redpanda) as fi:
                 fi.inject_failure(FailureSpec(FailureSpec.FAILURE_ISOLATE, node))
                 try:
-                    wait_until(lambda: False, timeout_sec=120, backoff_sec=1)
+                    wait_until(lambda: False, timeout_sec=self.unavailable_timeout * 2, backoff_sec=1)
                 except:
                     pass
 
             try:
-                wait_until(lambda: False, timeout_sec=120, backoff_sec=1)
+                wait_until(lambda: False, timeout_sec=self.unavailable_timeout * 2, backoff_sec=1)
             except:
                 pass
             wait_until(self.redpanda.healthy, timeout_sec=600, backoff_sec=1)
@@ -179,4 +209,6 @@ class TieredStorageWithLoadTest(PreallocNodesTest):
         finally:
             producer.stop()
             producer.wait(timeout_sec=600)
+            consumer.wait(timeout_sec=600)
+            assert consumer.consumer_status.validator.invalid_reads == 0
             self.free_preallocated_nodes()
