@@ -108,7 +108,7 @@ FIXTURE_TEST(
     BOOST_REQUIRE(upl_res == upload_result::success);
     m.add(key, meta);
 
-    remote_segment segment(remote, cache.local(), bucket, m, key, fib);
+    remote_segment segment(nullptr, remote, cache.local(), bucket, m, key, fib);
     auto reader_handle
       = segment.data_stream(0, ss::default_priority_class()).get();
 
@@ -144,7 +144,7 @@ FIXTURE_TEST(test_remote_segment_timeout, cloud_storage_fixture) { // NOLINT
 
     retry_chain_node fib(never_abort, 100ms, 20ms);
     remote_segment segment(
-      remote, cache.local(), bucket, m, key.base_offset, fib);
+      nullptr, remote, cache.local(), bucket, m, key.base_offset, fib);
     BOOST_REQUIRE_THROW(
       segment.data_stream(0, ss::default_priority_class()).get(),
       download_exception);
@@ -185,7 +185,7 @@ FIXTURE_TEST(
     storage::log_reader_config reader_config(
       model::offset(1), model::offset(1), ss::default_priority_class());
     auto segment = ss::make_lw_shared<remote_segment>(
-      remote, cache.local(), bucket, m, key, fib);
+      nullptr, remote, cache.local(), bucket, m, key, fib);
     partition_probe probe(manifest_ntp);
     remote_segment_batch_reader reader(
       segment, reader_config, probe, ssx::semaphore_units());
@@ -276,7 +276,7 @@ void test_remote_segment_batch_reader(
       begin, end, ss::default_priority_class());
     reader_config.max_bytes = std::numeric_limits<size_t>::max();
     auto segment = ss::make_lw_shared<remote_segment>(
-      remote, fixture.cache.local(), bucket, m, key, fib);
+      nullptr, remote, fixture.cache.local(), bucket, m, key, fib);
     partition_probe probe(manifest_ntp);
     remote_segment_batch_reader reader(
       segment, reader_config, probe, ssx::semaphore_units());
@@ -381,7 +381,7 @@ FIXTURE_TEST(
     m.add(key, meta);
 
     auto segment = ss::make_lw_shared<remote_segment>(
-      remote, cache.local(), bucket, m, key, fib);
+      nullptr, remote, cache.local(), bucket, m, key, fib);
 
     partition_probe probe(manifest_ntp);
     remote_segment_batch_reader reader(

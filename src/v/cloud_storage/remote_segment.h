@@ -56,6 +56,7 @@ public:
 class remote_segment final {
 public:
     remote_segment(
+      ss::shared_ptr<remote_partition> partition,
       remote& r,
       cache& cache,
       cloud_storage_clients::bucket_name bucket,
@@ -160,6 +161,15 @@ private:
 
     /// Load segment index from file (if available)
     ss::future<> maybe_materialize_index();
+
+    // The remote_partition hits segment was created from.
+    //
+    // Note that the remote partition may be stopped before this segment is
+    // destructed, as segment destruction may happen asynchronously. It is
+    // expected that the `remote_partition` destructs all references to
+    // `remote_segments` before destructing to avoid a circular dependency in
+    // destructors.
+    ss::shared_ptr<remote_partition> _partition;
 
     ss::gate _gate;
     remote& _api;

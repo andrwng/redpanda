@@ -67,8 +67,7 @@ struct materialized_segment_state {
 
     /// Record which partition this segment relates to.  This weak_ptr should
     /// never be broken, because our lifetime is shorter than our parent, but
-    /// a weak_ptr is preferable to a reference (crash on bug) or a shared_ptr
-    /// (prevent parent deallocation on bug).
+    /// a weak_ptr is preferable to a reference (crash on bug).
     ss::weak_ptr<remote_partition> parent;
 
     /// Units belonging to `materialized_segments`, for managing how many

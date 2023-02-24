@@ -101,13 +101,15 @@ static ss::sstring generate_log_prefix(
 }
 
 remote_segment::remote_segment(
+  ss::shared_ptr<remote_partition> partition,
   remote& r,
   cache& c,
   cloud_storage_clients::bucket_name bucket,
   const partition_manifest& m,
   model::offset key,
   retry_chain_node& parent)
-  : _api(r)
+  : _partition(std::move(partition))
+  , _api(r)
   , _cache(c)
   , _bucket(std::move(bucket))
   , _ntp(m.get_ntp())
