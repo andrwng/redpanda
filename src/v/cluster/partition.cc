@@ -74,9 +74,12 @@ partition::partition(
         _id_allocator_stm = ss::make_shared<cluster::id_allocator_stm>(
           clusterlog, _raft.get());
     } else if (is_tx_manager_topic(_raft->ntp())) {
-        if (_raft->log_config().is_collectable()) {
-            _log_eviction_stm = ss::make_lw_shared<cluster::log_eviction_stm>(
+        if (
+          _raft->log_config().is_collectable()
+          && !storage::deletion_exempt(_raft->ntp())) {
+            _log_eviction_stm = ss::make_shared<cluster::log_eviction_stm>(
               _raft.get(), clusterlog, _as, _kvstore);
+            stm_manager->add_stm(_log_eviction_stm);
         }
 
         if (_is_tx_enabled) {
@@ -87,9 +90,12 @@ partition::partition(
             stm_manager->add_stm(_tm_stm);
         }
     } else {
-        if (_raft->log_config().is_collectable()) {
-            _log_eviction_stm = ss::make_lw_shared<cluster::log_eviction_stm>(
+        if (
+          _raft->log_config().is_collectable()
+          && !storage::deletion_exempt(_raft->ntp())) {
+            _log_eviction_stm = ss::make_shared<cluster::log_eviction_stm>(
               _raft.get(), clusterlog, _as, _kvstore);
+            stm_manager->add_stm(_log_eviction_stm);
         }
         const model::topic_namespace tp_ns(
           _raft->ntp().ns, _raft->ntp().tp.topic);
@@ -169,6 +175,32 @@ partition::partition(
 }
 
 partition::~partition() {}
+
+ss::future<std::error_code> partition::prefix_truncate(
+  model::offset truncation_offset, ss::lowres_clock::time_point deadline) {
+    if (!_log_eviction_stm) {
+        throw std::runtime_error(
+          "Partition not prefix-truncatable, retention settings not applied");
+    }
+    if (_archival_meta_stm) {
+        throw std::runtime_error(
+          "Cannot yet prefix-truncate cloud storage enabled partitions");
+    }
+    const auto within_bounds = [this](model::offset kafka_truncation_offset) {
+        const auto& translator = _raft->get_offset_translator_state();
+        const auto kafka_start_offset = translator->from_log_offset(
+          start_offset());
+        const auto kafka_high_offset = translator->from_log_offset(
+          model::next_offset(_raft->last_visible_index()));
+        return kafka_truncation_offset > kafka_start_offset
+               && kafka_truncation_offset <= kafka_high_offset;
+    };
+    if (!within_bounds(truncation_offset)) {
+        co_return make_error_code(errc::invalid_truncation_offset);
+    }
+    co_return co_await _log_eviction_stm->truncate(
+      truncation_offset, deadline, _as);
+}
 
 ss::future<std::vector<rm_stm::tx_range>> partition::aborted_transactions_cloud(
   const cloud_storage::offset_range& offsets) {
