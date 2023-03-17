@@ -950,7 +950,7 @@ static ss::future<cloud_storage::upload_result> aggregate_upload_results(
 ss::future<ntp_archiver::scheduled_upload>
 ntp_archiver::schedule_single_upload(const upload_context& upload_ctx) {
     auto start_upload_offset = upload_ctx.start_offset;
-    auto last_stable_offset = upload_ctx.last_offset;
+    auto exclusive_last_offset = upload_ctx.exclusive_last_offset;
 
     auto log = _parent.log();
 
@@ -959,7 +959,7 @@ ntp_archiver::schedule_single_upload(const upload_context& upload_ctx) {
     case segment_upload_kind::non_compacted:
         upload_with_locks = co_await _policy.get_next_candidate(
           start_upload_offset,
-          last_stable_offset,
+          exclusive_last_offset,
           log,
           *_parent.get_offset_translator_state(),
           _conf->segment_upload_timeout);
@@ -978,9 +978,9 @@ ntp_archiver::schedule_single_upload(const upload_context& upload_ctx) {
         vlog(
           _rtclog.debug,
           "upload candidate not found, start_upload_offset: {}, "
-          "last_stable_offset: {}",
+          "exclusive_last_offset: {}",
           start_upload_offset,
-          last_stable_offset);
+          exclusive_last_offset);
         // Indicate that the upload is not started
         co_return scheduled_upload{
           .result = std::nullopt,
@@ -1038,7 +1038,7 @@ ntp_archiver::schedule_single_upload(const upload_context& upload_ctx) {
 }
 
 ss::future<std::vector<ntp_archiver::scheduled_upload>>
-ntp_archiver::schedule_uploads(model::offset last_stable_offset) {
+ntp_archiver::schedule_uploads(model::offset exclusive_last_offset) {
     // We have to increment last offset to guarantee progress.
     // The manifest's last offset contains dirty_offset of the
     // latest uploaded segment but '_policy' requires offset that
@@ -1062,7 +1062,7 @@ ntp_archiver::schedule_uploads(model::offset last_stable_offset) {
     params.emplace_back(
       segment_upload_kind::non_compacted,
       start_upload_offset,
-      last_stable_offset,
+      exclusive_last_offset,
       allow_reuploads_t::no);
 
     if (
@@ -1086,27 +1086,28 @@ ntp_archiver::schedule_uploads(std::vector<upload_context> loop_contexts) {
         if (uploads_remaining <= 0) {
             vlog(
               _rtclog.info,
-              "no more upload slots remaining, skipping upload kind: {}, start "
-              "offset: {}, last offset: {}, uploads remaining: {}",
+              "no more upload slots remaining, skipping upload kind: {}, "
+              "inclusive start offset: {}, exclusive last offset: {}, uploads "
+              "remaining: {}",
               ctx.upload_kind,
               ctx.start_offset,
-              ctx.last_offset,
+              ctx.exclusive_last_offset,
               uploads_remaining);
             break;
         }
 
         vlog(
           _rtclog.debug,
-          "scheduling uploads, start offset: {}, last offset: {}, upload kind: "
-          "{}, uploads remaining: {}",
+          "scheduling uploads, inclusive start offset: {}, exclusive last "
+          "offset: {}, upload kind: {}, uploads remaining: {}",
           ctx.start_offset,
-          ctx.last_offset,
+          ctx.exclusive_last_offset,
           ctx.upload_kind,
           uploads_remaining);
 
         // this metric is only relevant for non compacted uploads.
         if (ctx.upload_kind == segment_upload_kind::non_compacted) {
-            _probe->upload_lag(ctx.last_offset - ctx.start_offset);
+            _probe->upload_lag(ctx.exclusive_last_offset - ctx.start_offset);
         }
 
         while (uploads_remaining > 0 && may_begin_uploads()) {
@@ -1366,12 +1367,13 @@ ss::future<ntp_archiver::batch_result> ntp_archiver::wait_all_scheduled_uploads(
 ss::future<ntp_archiver::batch_result> ntp_archiver::upload_next_candidates(
   std::optional<model::offset> lso_override) {
     vlog(_rtclog.debug, "Uploading next candidates called for {}", _ntp);
-    auto last_stable_offset = lso_override ? *lso_override
-                                           : _parent.last_stable_offset();
+    auto exclusive_last_offset = lso_override ? *lso_override
+                                              : _parent.last_stable_offset();
     ss::gate::holder holder(_gate);
     try {
         auto units = co_await ss::get_units(_mutex, 1, _as);
-        auto scheduled_uploads = co_await schedule_uploads(last_stable_offset);
+        auto scheduled_uploads = co_await schedule_uploads(
+          exclusive_last_offset);
         co_return co_await wait_all_scheduled_uploads(
           std::move(scheduled_uploads));
     } catch (const ss::gate_closed_exception&) {
@@ -1490,11 +1492,11 @@ ntp_archiver::upload_context::schedule_single_upload(ntp_archiver& archiver) {
 ntp_archiver::upload_context::upload_context(
   segment_upload_kind upload_kind,
   model::offset start_offset,
-  model::offset last_offset,
+  model::offset exclusive_last_offset,
   allow_reuploads_t allow_reuploads)
   : upload_kind{upload_kind}
   , start_offset{start_offset}
-  , last_offset{last_offset}
+  , exclusive_last_offset{last_offset}
   , allow_reuploads{allow_reuploads}
   , uploads{} {}
 
