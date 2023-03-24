@@ -1264,6 +1264,31 @@ ss::future<ntp_archiver::upload_group_result> ntp_archiver::wait_uploads(
             manifest_clean_offset = _projected_manifest_clean_at;
         }
 
+        // We've successfully uploaded some segments. Before we replicate an
+        // update with the archival STM, drop any segment locks that may be
+        // held. It's possible these locks are blocking other fibers from
+        // taking write locks, which in turn, may prevent further read locks
+        // from being held. Replicating and waiting on archival batches to be
+        // applied may require taking read locks on these segments.
+        //
+        // Specifically, we want to avoid a series of events like:
+        // 1. This fiber holds the uploaded segment's read lock
+        // 2. Another fiber attempts to write lock the segment (e.g. during a
+        //    segment roll), but can't. Instead, it prevents other read locks
+        //    from being taken as it waits.
+        // 3. This fiber attempts to replicate an archival batch, which
+        //    subsequently waits for all prior ops to be applied, which may
+        //    require consuming from this segment. In doing so, we attempt to
+        //    read lock a locked segment.
+        //
+        // To avoid this, simply drop the locks here, now that we're done with
+        // them. There's no concern that the underlying offsets will disappear
+        // since the archival STM pins offsets until they are recorded in the
+        // manifest.
+        for (auto& upl : scheduled) {
+            upl.segment_read_locks.clear();
+        }
+
         auto error = co_await _parent.archival_meta_stm()->add_segments(
           mdiff, manifest_clean_offset, deadline, _as);
         if (
@@ -1820,6 +1845,11 @@ ss::future<bool> ntp_archiver::do_upload_local(
       .delta_offset_end = delta_offset_end,
       .sname_format = cloud_storage::segment_name_format::v2,
     };
+
+    // We've successfully uploaded these segments. Drop the locks to avoid
+    // races with the STM trying to wait for applies (which may read segments
+    // and take read locks).
+    locks.clear();
 
     auto deadline = ss::lowres_clock::now() + _conf->manifest_upload_timeout;
     auto error = co_await _parent.archival_meta_stm()->add_segments(
