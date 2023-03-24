@@ -206,6 +206,13 @@ ss::future<bool> persisted_stm::do_sync(
   model::timeout_clock::duration timeout,
   model::offset offset,
   model::term_id term) {
+    vlog(
+      clusterlog.trace,
+      "AWONG sync of {} for offset {} in term {}: {}",
+      name(),
+      offset,
+      term,
+      _c->ntp());
     const auto committed = _c->committed_offset();
     const auto ntp = _c->ntp();
     _c->events().notify_commit_index();
@@ -272,6 +279,13 @@ ss::future<bool> persisted_stm::do_sync(
             co_return false;
         }
         if (_c->term() == term) {
+    vlog(
+      clusterlog.trace,
+      "AWONG sync finished for {} for offset {} in term {}: {}",
+      name(),
+      offset,
+      term,
+      _c->ntp());
             _insync_term = term;
             co_return true;
         }
@@ -331,6 +345,12 @@ ss::future<bool> persisted_stm::wait_no_throw(
   model::offset offset,
   model::timeout_clock::time_point deadline,
   std::optional<std::reference_wrapper<ss::abort_source>> as) {
+    vlog(
+      clusterlog.trace,
+      "waiting for {} to apply offset: {}, ntp: {}",
+      name(),
+      offset,
+      _c->ntp());
     return wait(offset, deadline, as)
       .then([] { return true; })
       .handle_exception_type([](const ss::abort_requested_exception&) {

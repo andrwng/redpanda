@@ -81,6 +81,7 @@ state_machine::batch_applicator::operator()(model::record_batch batch) {
 
     auto last_offset = batch.last_offset();
     return _machine->apply(std::move(batch)).then([this, last_offset] {
+        vlog(_machine->_log.info, "AWONG {} applying {}", _machine->_raft->ntp(), last_offset);
         _machine->_next = model::next_offset(last_offset);
         _machine->_waiters.notify(last_offset);
         return ss::stop_iteration::no;
@@ -127,6 +128,7 @@ ss::future<> state_machine::apply() {
           }
           return f.then([this] {
               // build a reader for log range [_next, +inf).
+              vlog( _log.debug, "AWONG {} consume from {}", _raft->ntp(), _next);
               storage::log_reader_config config(
                 _next, model::model_limits<model::offset>::max(), _io_prio);
               return _raft->make_reader(config);

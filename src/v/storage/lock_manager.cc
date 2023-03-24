@@ -8,6 +8,7 @@
 // by the Apache License, Version 2.0
 
 #include "storage/lock_manager.h"
+#include "storage/logger.h"
 
 #include <seastar/core/future-util.hh>
 #include <seastar/core/rwlock.hh>

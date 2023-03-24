@@ -15,6 +15,7 @@
 #include "storage/compacted_index_writer.h"
 #include "storage/fs_utils.h"
 #include "storage/fwd.h"
+#include "storage/logger.h"
 #include "storage/segment_appender.h"
 #include "storage/segment_index.h"
 #include "storage/segment_reader.h"
@@ -391,11 +392,17 @@ inline void segment::cache_put(const model::record_batch& batch) {
 }
 inline ss::future<ss::rwlock::holder>
 segment::read_lock(ss::semaphore::time_point timeout) {
-    return _destructive_ops.hold_read_lock(timeout);
+    vlog(stlog.info, "AWONG read locking {}", filename());
+    auto l = co_await _destructive_ops.hold_read_lock(timeout);
+    vlog(stlog.info, "AWONG read locked {}", filename());
+    co_return l;
 }
 inline ss::future<ss::rwlock::holder>
 segment::write_lock(ss::semaphore::time_point timeout) {
-    return _destructive_ops.hold_write_lock(timeout);
+    vlog(stlog.info, "AWONG write locking {}", filename());
+    auto l = co_await _destructive_ops.hold_write_lock(timeout);
+    vlog(stlog.info, "AWONG write locked {}", filename());
+    co_return l;
 }
 inline void segment::tombstone() { _flags |= bitflags::mark_tombstone; }
 inline bool segment::has_outstanding_locks() const {

@@ -10,6 +10,7 @@
 #include "raft/event_manager.h"
 
 #include "raft/consensus.h"
+#include "raft/logger.h"
 
 namespace raft {
 
@@ -21,6 +22,8 @@ ss::future<> event_manager::start() {
               // we won't miss an update because notify is synchronous. If there
               // is a new commit index getting ready to be set, it won't signal
               // until after we've waited.
+              auto log = ctx_log(_consensus->group(), _consensus->ntp());
+              vlog(log.info, "Notifying committed offset: {}", _consensus->committed_offset());
               _commit_index.notify(_consensus->committed_offset());
               return _cond.wait();
           });

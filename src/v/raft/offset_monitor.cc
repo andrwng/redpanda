@@ -34,9 +34,11 @@ ss::future<> offset_monitor::wait(
     auto w = std::make_unique<waiter>(this, timeout, as);
     auto f = w->done.get_future();
     if (!f.available()) {
+        auto log = ctx_log(group_id{}, model::ntp{});
         // the future may already be available, for example if an abort had
         // already be requested. in that case, skip adding as a waiter.
         _waiters.emplace(offset, std::move(w));
+        vlog(log.info, "AWONG {} waiting offset {}, {} waiters", (void*)(this), offset, _waiters.size());
     }
     return f;
 }
@@ -44,11 +46,17 @@ ss::future<> offset_monitor::wait(
 void offset_monitor::notify(model::offset offset) {
     _last_applied = std::max(offset, _last_applied);
 
+    auto log = ctx_log(group_id{}, model::ntp{});
+    vlog(log.info, "AWONG {} notifying offset {} with {} waiters", (void*)(this), offset, _waiters.size());
     while (true) {
         auto it = _waiters.begin();
         if (it == _waiters.end() || offset < it->first) {
+            if (it != _waiters.end()) {
+                  vlog(log.info, "AWONG {} offset {}, leaving waiter offset {}", (void*)(this), offset, it->first);
+            }
             return;
         }
+        vlog(log.info, "AWONG {} offset {}, waiter offset {}", (void*)(this), offset, it->first);
         it->second->done.set_value();
         // when the waiter is destroyed here by erase, then if they are active,
         // the timer is cancelled and the abort source subscription is removed.

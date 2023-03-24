@@ -312,6 +312,9 @@ ss::future<std::error_code> archival_metadata_stm::do_replicate_commands(
   model::record_batch batch,
   std::optional<std::reference_wrapper<ss::abort_source>> as) {
     auto current_term = _insync_term;
+    vlog(
+      _logger.trace,
+      "replicating batch in term {}", current_term);
     auto fut = _raft->replicate(
       current_term,
       model::make_memory_record_batch_reader(std::move(batch)),
@@ -340,12 +343,16 @@ ss::future<std::error_code> archival_metadata_stm::do_replicate_commands(
         }
         co_return result.error();
     }
+    vlog(
+      _logger.trace,
+      "finished replicating batch in term {}, waiting for apply of {}",
+      current_term, result.value().last_offset);
 
     auto applied = co_await wait_no_throw(
       result.value().last_offset, model::no_timeout, as);
     if (!applied) {
         if (
-          as.has_value() && !as.value().get().abort_requested()
+          (!as.has_value() || !as.value().get().abort_requested())
           && _c->is_leader() && _c->term() == current_term) {
             co_await _c->step_down(ssx::sformat(
               "failed to replicate archival batch in term {}", current_term));
@@ -353,6 +360,9 @@ ss::future<std::error_code> archival_metadata_stm::do_replicate_commands(
         co_return errc::replication_error;
     }
 
+    vlog(
+      _logger.trace,
+      "finished applying batch offset {}", result.value().last_offset);
     co_return errc::success;
 }
 
@@ -546,9 +556,15 @@ ss::future<std::error_code> archival_metadata_stm::do_add_segments(
 }
 
 ss::future<> archival_metadata_stm::apply(model::record_batch b) {
+    vlog(
+      _logger.info,
+      "AWONG applying");
     // Block manifest serialization during mutation of the
     // manifest since it's asynchronous.
     auto units = co_await _manifest_lock.get_units();
+    vlog(
+      _logger.info,
+      "AWONG got manifest units");
     if (b.header().type != model::record_batch_type::archival_metadata) {
         _insync_offset = b.last_offset();
         co_return;
