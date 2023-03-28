@@ -165,8 +165,9 @@ def wait_until_segments(redpanda,
 
 def wait_for_removal_of_n_segments(redpanda, topic: str, partition_idx: int,
                                    n: int,
-                                   original_snapshot: dict[str,
-                                                           list[Segment]]):
+                                   original_snapshot: dict[str, list[Segment]],
+                                   timeout_sec: Optional[int],
+                                   backoff_sec: Optional[int]):
     """
     Wait until 'n' segments of a partition that are present in the
     provided snapshot are removed by all brokers.
@@ -177,6 +178,13 @@ def wait_for_removal_of_n_segments(redpanda, topic: str, partition_idx: int,
     :param n: number of removed segments to wait for
     :param original_snapshot: snapshot of segments to compare against
     """
+
+    if timeout_sec is None:
+        timeout_sec = 180
+
+    if backoff_sec is None:
+        backoff_sec = 5
+
     def segments_removed():
         current_snapshot = redpanda.storage(all_nodes=True).segments_by_node(
             "kafka", topic, partition_idx)
@@ -202,8 +210,8 @@ def wait_for_removal_of_n_segments(redpanda, topic: str, partition_idx: int,
         return True
 
     wait_until(segments_removed,
-               timeout_sec=180,
-               backoff_sec=5,
+               timeout_sec=timeout_sec,
+               backoff_sec=backoff_sec,
                err_msg="Segments were not removed from all nodes")
 
 
