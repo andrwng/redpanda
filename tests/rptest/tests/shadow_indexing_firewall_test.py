@@ -6,10 +6,14 @@
 #
 # https://github.com/redpanda-data/redpanda/blob/master/licenses/rcl.md
 
+import time
+import os
+
 from ducktape.mark import matrix
 from rptest.services.cluster import cluster
 from rptest.tests.redpanda_test import RedpandaTest
-from rptest.services.redpanda import CloudStorageType, SISettings, get_cloud_storage_type
+from rptest.services.redpanda import CloudStorageType, RedpandaService, SISettings, get_cloud_storage_type
+from rptest.services.storage import NodeStorage
 
 from rptest.clients.types import TopicSpec
 from rptest.clients.rpk import RpkTool, RpkException
@@ -77,3 +81,56 @@ class ShadowIndexingFirewallTest(RedpandaTest):
                 raise RuntimeError(
                     f"RPK consume should have timed out, but ran with output: {out}"
                 )
+
+class ShadowIndexingBadPermissionsTest(RedpandaTest):
+    log_segment_size = 1048576  # 1MB
+    retention_bytes = log_segment_size  # 1 segment
+
+    s3_topic_name = "panda-topic"
+    topics = (TopicSpec(name=s3_topic_name,
+                        partition_count=1,
+                        replication_factor=1), )
+
+    def __init__(self, test_context):
+        si_settings = SISettings(test_context, log_segment_size=self.log_segment_size)
+        super(ShadowIndexingBadPermissionsTest,
+              self).__init__(test_context=test_context,
+                             num_brokers=1,
+                             si_settings=si_settings)
+
+    @cluster(num_nodes=1)
+    def test_consume_with_bad_permissions(self):
+        """
+        Test that mounting the cloud storage cache incorrectly has reasonably
+        debuggable behavior.
+        """
+        produce_until_segments(redpanda=self.redpanda,
+                               topic=self.s3_topic_name,
+                               partition_idx=0,
+                               count=5,
+                               acks=-1)
+
+        # Truncate so we ensure we consume from S3.
+        rpk = RpkTool(self.redpanda)
+        rpk.alter_topic_config(
+            self.s3_topic_name,
+            TopicSpec.PROPERTY_RETENTION_LOCAL_TARGET_BYTES,
+            self.retention_bytes)
+
+        wait_for_local_storage_truncate(redpanda=self.redpanda,
+                                        topic=self.s3_topic_name,
+                                        target_bytes=self.retention_bytes)
+
+        node = self.redpanda.nodes[0]
+        self.redpanda.stop_node(node)
+        store = NodeStorage(node.name, RedpandaService.DATA_DIR)
+        cloud_cache_path = os.path.join(store.data_dir, "cloud_storage_cache")
+        try:
+            # Inject an error into the cloud cache: this makes the directory
+            # read-only.
+            node.account.ssh(f"chattr +i {cloud_cache_path}")
+            self.redpanda.restart_nodes([node])
+            out = rpk.consume(topic=self.s3_topic_name, offset=0, n=1, timeout=5)
+            self.logger.info(out)
+        finally:
+            node.account.ssh(f"chattr -i {cloud_cache_path}")
