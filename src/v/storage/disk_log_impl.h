@@ -90,6 +90,8 @@ public:
     std::optional<model::term_id> get_term(model::offset) const final;
     std::optional<model::offset>
     get_term_last_offset(model::term_id term) const final;
+    std::optional<model::offset>
+    nearest_batch_boundary_offset(model::offset o) const final;
     std::ostream& print(std::ostream&) const final;
 
     ss::future<> maybe_roll(

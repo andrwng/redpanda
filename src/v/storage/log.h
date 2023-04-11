@@ -81,6 +81,8 @@ public:
         virtual std::optional<model::term_id> get_term(model::offset) const = 0;
         virtual std::optional<model::offset>
           get_term_last_offset(model::term_id) const = 0;
+        virtual std::optional<model::offset>
+        nearest_batch_boundary_offset(model::offset o) const = 0;
 
         virtual ss::future<model::offset>
         monitor_eviction(ss::abort_source&) = 0;
@@ -168,6 +170,11 @@ public:
     std::optional<model::offset>
     get_term_last_offset(model::term_id term) const {
         return _impl->get_term_last_offset(term);
+    }
+
+    std::optional<model::offset>
+    nearest_batch_boundary_offset(model::offset o) const {
+        return _impl->nearest_batch_boundary_offset(o);
     }
 
     ss::future<std::optional<timequery_result>>
