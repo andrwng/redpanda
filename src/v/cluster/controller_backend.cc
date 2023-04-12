@@ -1877,7 +1877,7 @@ ss::future<std::error_code> controller_backend::create_partition(
 
         } catch (...) {
             vlog(
-              clusterlog.warn,
+              clusterlog.error,
               "[{}] failed to create partition with revision {} - {}",
               ntp,
               log_revision,
