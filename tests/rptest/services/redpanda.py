@@ -64,7 +64,7 @@ FileToChecksumSize = dict[str, Tuple[str, int]]
 DEFAULT_LOG_ALLOW_LIST = [
     # Tests currently don't run on XFS, although in future they should.
     # https://github.com/redpanda-data/redpanda/issues/2376
-    re.compile("not on XFS. This is a non-supported setup."),
+    re.compile("not on XFS or ext4. This is a non-supported configuration."),
 
     # This is expected when tests are intentionally run on low memory configurations
     re.compile(r"Memory: '\d+' below recommended"),
