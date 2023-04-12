@@ -186,6 +186,9 @@ ss::future<std::error_code> partition::prefix_truncate(
         throw std::runtime_error(
           "Cannot yet prefix-truncate cloud storage enabled partitions");
     }
+    if (!feature_table().local().is_active(features::feature::delete_records)) {
+        co_return cluster::errc::feature_disabled;
+    }
     const auto within_bounds = [this](model::offset kafka_truncation_offset) {
         const auto& translator = _raft->get_offset_translator_state();
         const auto kafka_start_offset = translator->from_log_offset(

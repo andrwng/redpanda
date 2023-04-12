@@ -153,6 +153,10 @@ static ss::future<result_t> prefix_truncate(
         case cluster::errc::invalid_truncation_offset:
             kerr = error_code::offset_out_of_range;
             break;
+        case cluster::errc::feature_disabled:
+            vlog(
+              klog.warn,
+              "delete_records request rejected - feature not yet activated");
         default:
             kerr = error_code::unknown_server_error;
         }
