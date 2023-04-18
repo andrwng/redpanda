@@ -491,17 +491,56 @@ FIXTURE_TEST(test_concat_segment_upload, remote_fixture) {
 }
 
 FIXTURE_TEST(test_list_bucket, remote_fixture) {
-    set_expectations_and_listen(
-      {{.url = "/?list-type=2",
-        .body = ss::sstring{list_response.data(), list_response.size()}}});
-
+    set_expectations_and_listen({});
     cloud_storage_clients::bucket_name bucket{"test"};
-    retry_chain_node fib(never_abort, 100ms, 20ms);
-    auto result = remote.local().list_objects(bucket, fib).get();
-    BOOST_REQUIRE(result.has_value());
+    retry_chain_node fib(never_abort, 10s, 20ms);
 
-    auto items = result.value();
-    BOOST_REQUIRE_EQUAL(items.contents.size(), 2);
+    int first = 2;
+    int second = 3;
+    int third = 4;
+    for (int i = 0; i < first; i++) {
+        for (int j = 0; j < second; j++) {
+            for (int k = 0; k < third; k++) {
+                cloud_storage_clients::object_key path{
+                  fmt::format("{}/{}/{}", i, j, k)};
+                auto result
+                  = remote.local().upload_object(bucket, path, "p", fib).get();
+                BOOST_REQUIRE_EQUAL(
+                  cloud_storage::upload_result::success, result);
+            }
+        }
+    }
+    {
+        auto result = remote.local().list_objects(bucket, fib).get();
+        BOOST_REQUIRE(result.has_value());
+        BOOST_REQUIRE_EQUAL(
+          result.value().contents.size(), first * second * third);
+        BOOST_REQUIRE(result.value().common_prefixes.empty());
+    }
+    {
+        cloud_storage_clients::object_key prefix("/");
+        auto result
+          = remote.local().list_objects(bucket, fib, prefix, '/').get();
+        BOOST_REQUIRE(result.has_value());
+        BOOST_REQUIRE_EQUAL(
+          result.value().contents.size(), first * second * third);
+        BOOST_REQUIRE_EQUAL(result.value().common_prefixes.size(), first);
+    }
+    {
+        cloud_storage_clients::object_key prefix("/1/");
+        auto result = remote.local().list_objects(bucket, fib, prefix).get();
+        BOOST_REQUIRE(result.has_value());
+        BOOST_REQUIRE_EQUAL(result.value().contents.size(), second * third);
+        BOOST_REQUIRE(result.value().common_prefixes.empty());
+    }
+    {
+        cloud_storage_clients::object_key prefix("/1/");
+        auto result
+          = remote.local().list_objects(bucket, fib, prefix, '/').get();
+        BOOST_REQUIRE(result.has_value());
+        BOOST_REQUIRE_EQUAL(result.value().contents.size(), second * third);
+        BOOST_REQUIRE_EQUAL(result.value().common_prefixes.size(), second);
+    }
 }
 
 FIXTURE_TEST(test_list_bucket_with_prefix, remote_fixture) {
