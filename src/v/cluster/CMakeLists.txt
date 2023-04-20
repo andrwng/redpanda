@@ -162,6 +162,7 @@ v_cc_library(
     cloud_storage_size_reducer.cc
     cloud_metadata/cluster_manifest.cc
     cloud_metadata/key_utils.cc
+    cloud_metadata/uploader.cc
   DEPS
     Seastar::seastar
     bootstrap_rpc
