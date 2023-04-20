@@ -160,6 +160,8 @@ v_cc_library(
     topic_recovery_status_types.cc
     topic_table_partition_generator.cc
     cloud_storage_size_reducer.cc
+    cloud_metadata/cluster_manifest.cc
+    cloud_metadata/key_utils.cc
   DEPS
     Seastar::seastar
     bootstrap_rpc
@@ -181,4 +183,5 @@ v_cc_library(
     v::features
   )
 add_subdirectory(tests)
+add_subdirectory(cloud_metadata/tests)
 add_subdirectory(self_test/tests)
