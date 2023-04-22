@@ -52,6 +52,7 @@ set(srcs
         ephemeral_credential_test.cc
         health_monitor_test.cc
         metadata_dissemination_test.cc
+        partition_recovery_test.cc
         backend_reallocation_strategy_test.cc
         replicas_rebalancing_tests.cc)
 
@@ -61,7 +62,7 @@ foreach(cluster_test_src ${srcs})
             FIXTURE_TEST
             BINARY_NAME cluster_${test_name}
             SOURCES ${cluster_test_src}
-            LIBRARIES v::seastar_testing_main v::application v::storage_test_utils v::cluster
+            LIBRARIES v::seastar_testing_main v::application v::storage_test_utils v::cluster v::kafka_test_utils
             LABELS cluster
     )
 endforeach()
