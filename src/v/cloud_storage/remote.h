@@ -257,6 +257,20 @@ public:
       std::optional<cloud_storage_clients::http_byte_range> byte_range
       = std::nullopt);
 
+    ss::future<upload_result> upload_file(
+      const cloud_storage_clients::bucket_name& bucket,
+      const remote_segment_path& remote_path,
+      const ss::file& file,
+      retry_chain_node& parent,
+      lazy_abort_source& lazy_abort_source,
+      const cloud_storage_clients::object_tag_formatter& tags
+      = default_segment_tags);
+    ss::future<download_result> download_file(
+      const cloud_storage_clients::bucket_name& bucket,
+      const remote_segment_path& remote_path,
+      const try_consume_stream& cons_str,
+      retry_chain_node& parent);
+
     /// \brief Download segment index from S3
     /// \param ix is the index which will be populated from data from the object
     /// store

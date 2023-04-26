@@ -393,6 +393,177 @@ void remote::notify_external_subscribers(
       [](const event_filter& f) { return !f._promise.has_value(); });
 }
 
+ss::future<upload_result> remote::upload_file(
+  const cloud_storage_clients::bucket_name& bucket,
+  const remote_segment_path& remote_path,
+  const ss::file& file,
+  retry_chain_node& parent,
+  lazy_abort_source& lazy_abort_source,
+  const cloud_storage_clients::object_tag_formatter& tags) {
+    gate_guard guard{_gate};
+    retry_chain_node fib(&parent);
+    retry_chain_logger ctxlog(cst_log, fib);
+    auto permit = fib.retry();
+    auto file_size = co_await file.size();
+    vlog(
+      ctxlog.debug,
+      "Uploading file to path {}, length {}",
+      remote_path,
+      file_size);
+    std::optional<upload_result> result;
+    while (!_gate.is_closed() && permit.is_allowed && !result) {
+        auto lease = co_await _pool.local().acquire(fib.root_abort_source());
+
+        // Client acquisition can take some time. Do a check before starting
+        // the upload if we can still continue.
+        if (lazy_abort_source.abort_requested()) {
+            vlog(
+              ctxlog.warn,
+              "{}: cancelled uploading {} to {}",
+              lazy_abort_source.abort_reason(),
+              remote_path,
+              bucket);
+            _probe.failed_upload();
+            co_return upload_result::cancelled;
+        }
+
+        ss::file_input_stream_options opts;
+        auto file_stream = ss::make_file_input_stream(file, opts);
+        auto obj_key = cloud_storage_clients::object_key(remote_path());
+        // Segment upload attempt
+        auto res = co_await lease.client->put_object(
+          bucket,
+          obj_key,
+          file_size,
+          std::move(file_stream),
+          tags,
+          fib.get_timeout());
+
+        if (res) {
+            _probe.successful_upload();
+            _probe.register_upload_size(file_size);
+            co_return upload_result::success;
+        }
+
+        lease.client->shutdown();
+        switch (res.error()) {
+        case cloud_storage_clients::error_outcome::retry:
+            vlog(
+              ctxlog.debug,
+              "Uploading {} to {}, {} backoff required",
+              obj_key,
+              bucket,
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                permit.delay));
+            _probe.upload_backoff();
+            if (!lazy_abort_source.abort_requested()) {
+                co_await ss::sleep_abortable(
+                  permit.delay, fib.root_abort_source());
+            }
+            permit = fib.retry();
+            break;
+        case cloud_storage_clients::error_outcome::key_not_found:
+            // not expected during upload
+            [[fallthrough]];
+        case cloud_storage_clients::error_outcome::fail:
+            result = upload_result::failed;
+            break;
+        }
+    }
+
+    _probe.failed_upload();
+
+    if (!result) {
+        vlog(
+          ctxlog.warn,
+          "Uploading {} to {}, backoff quota exceded, not uploaded",
+          remote_path,
+          bucket);
+    } else {
+        vlog(
+          ctxlog.warn,
+          "Uploading {} to {}, {}, not uploaded",
+          remote_path,
+          bucket,
+          *result);
+    }
+    co_return upload_result::timedout;
+}
+
+ss::future<download_result> remote::download_file(
+  const cloud_storage_clients::bucket_name& bucket,
+  const remote_segment_path& remote_path,
+  const try_consume_stream& cons_str,
+  retry_chain_node& parent) {
+    gate_guard guard{_gate};
+    retry_chain_node fib(&parent);
+    retry_chain_logger ctxlog(cst_log, fib);
+    auto path = cloud_storage_clients::object_key(remote_path());
+    auto lease = co_await _pool.local().acquire(fib.root_abort_source());
+
+    auto permit = fib.retry();
+    vlog(ctxlog.debug, "Downloading file {}", path);
+
+    std::optional<download_result> result;
+    while (!_gate.is_closed() && permit.is_allowed && !result) {
+        auto resp = co_await lease.client->get_object(
+          bucket, path, fib.get_timeout());
+
+        if (resp) {
+            vlog(ctxlog.debug, "Receive OK response from {}", path);
+            auto length = boost::lexical_cast<uint64_t>(
+              resp.value()->get_headers().at(
+                boost::beast::http::field::content_length));
+            uint64_t content_length = co_await cons_str(
+              length, resp.value()->as_input_stream());
+            _probe.successful_download();
+            _probe.register_download_size(content_length);
+            co_return download_result::success;
+        }
+
+        lease.client->shutdown();
+
+        switch (resp.error()) {
+        case cloud_storage_clients::error_outcome::retry:
+            vlog(
+              ctxlog.debug,
+              "Downloading file from {}, {} backoff required",
+              bucket,
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                permit.delay));
+            _probe.download_backoff();
+            co_await ss::sleep_abortable(permit.delay, fib.root_abort_source());
+            permit = fib.retry();
+            break;
+        case cloud_storage_clients::error_outcome::fail:
+            result = download_result::failed;
+            break;
+        case cloud_storage_clients::error_outcome::key_not_found:
+            result = download_result::notfound;
+            break;
+        }
+    }
+    // XXX:
+    _probe.failed_index_download();
+    if (!result) {
+        vlog(
+          ctxlog.warn,
+          "Downloading file from {}, backoff quota exceded, file at {} "
+          "not available",
+          bucket,
+          path);
+        result = download_result::timedout;
+    } else {
+        vlog(
+          ctxlog.warn,
+          "Downloading file from {}, {}, file at {} not available",
+          bucket,
+          *result,
+          path);
+    }
+    co_return *result;
+}
+
 ss::future<upload_result> remote::upload_segment(
   const cloud_storage_clients::bucket_name& bucket,
   const remote_segment_path& segment_path,
