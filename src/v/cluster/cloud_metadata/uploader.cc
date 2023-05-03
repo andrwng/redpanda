@@ -21,6 +21,7 @@
 #include "raft/types.h"
 #include "ssx/future-util.h"
 #include "ssx/sleep_abortable.h"
+#include "storage/snapshot.h"
 
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/fstream.hh>
@@ -108,6 +109,7 @@ ss::future<> uploader::upload_until_term_change() {
         }
         vlog(clusterlog.trace, "Controller is leader in term {}", synced_term);
 
+        auto controller_snap_file = co_await _raft0->open_snapshot_file();
         retry_chain_node retry_node(_as, _upload_interval_ms(), 100ms);
 
         // Update the in-memory metadata ID to prepare for further uploads in
@@ -118,6 +120,83 @@ ss::future<> uploader::upload_until_term_change() {
             manifest.metadata_id = cluster_metadata_id(
               manifest.metadata_id() + 1);
         }
+
+        // Set up an abort source for if there is a leadership change while
+        // we're uploading.
+        auto lazy_as = cloud_storage::lazy_abort_source{
+          [&, synced_term]() {
+              return synced_term != _raft0->term()
+                       ? std::make_optional(fmt::format(
+                         "lost leadership or term changed: synced term {} vs "
+                         "current term {}",
+                         synced_term,
+                         _raft0->term()))
+                       : std::nullopt;
+          },
+        };
+        if (controller_snap_file.has_value()) {
+            vlog(
+              clusterlog.trace,
+              "Local controller snapshot found at {}",
+              _raft0->get_snapshot_path());
+            auto reader = storage::snapshot_reader(
+              controller_snap_file.value(),
+              ss::make_file_input_stream(
+                *controller_snap_file,
+                0,
+                co_await controller_snap_file->size()),
+              _raft0->get_snapshot_path());
+            model::offset local_last_included_offset;
+            std::exception_ptr err;
+            try {
+                auto snap_metadata_buf = co_await reader.read_metadata();
+                auto snap_parser = iobuf_parser(std::move(snap_metadata_buf));
+                auto snap_metadata = reflection::adl<raft::snapshot_metadata>{}
+                                       .from(snap_parser);
+                local_last_included_offset = snap_metadata.last_included_index;
+                vassert(
+                  snap_metadata.last_included_index != model::offset{},
+                  "Invalid offset for snapshot {}",
+                  _raft0->get_snapshot_path());
+                vlog(
+                  clusterlog.debug,
+                  "Local controller snapshot at {} has last offset {}, current "
+                  "snapshot offset in manifest {}",
+                  _raft0->get_snapshot_path(),
+                  local_last_included_offset,
+                  manifest.controller_snapshot_offset);
+
+                // If we haven't uploaded a snapshot or the local snapshot is
+                // new, upload it.
+                if (
+                  manifest.controller_snapshot_offset == model::offset{}
+                  || local_last_included_offset
+                       > manifest.controller_snapshot_offset) {
+                    cloud_storage::remote_segment_path
+                      remote_controller_snapshot_path{controller_snapshot_key(
+                        _cluster_uuid, manifest.metadata_id)};
+                    auto upl_res = co_await _remote.upload_file(
+                      _bucket,
+                      remote_controller_snapshot_path,
+                      controller_snap_file.value(),
+                      retry_node,
+                      lazy_as);
+                    if (upl_res == cloud_storage::upload_result::success) {
+                        manifest.controller_snapshot_path
+                          = remote_controller_snapshot_path().string();
+                        manifest.controller_snapshot_offset
+                          = local_last_included_offset;
+                    }
+                }
+            } catch (...) {
+                err = std::current_exception();
+            }
+            co_await reader.close();
+            if (err) {
+                std::rethrow_exception(err);
+            }
+        }
+
         // Upload a fresh manifest if we can.
         if (co_await term_has_changed(synced_term)) {
             co_return;
