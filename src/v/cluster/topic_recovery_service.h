@@ -25,6 +25,8 @@
 #include <boost/circular_buffer.hpp>
 
 namespace cluster {
+class config_frontend;
+class security_frontend;
 class topics_frontend;
 class topic_recovery_status_frontend;
 class topic_table;
@@ -79,8 +81,11 @@ struct topic_recovery_service
 
     topic_recovery_service(
       ss::sharded<remote>& remote,
+      ss::sharded<cloud_storage::cache>& cache,
       ss::sharded<cluster::topic_table>& topic_state,
       ss::sharded<cluster::topics_frontend>& topics_frontend,
+      ss::sharded<cluster::security_frontend>& security_frontend,
+      ss::sharded<cluster::config_frontend>& config_frontend,
       ss::sharded<cluster::topic_recovery_status_frontend>&
         topic_recovery_status_frontend);
 
@@ -173,8 +178,11 @@ private:
     state _state{state::inactive};
     recovery_task_config _config;
     ss::sharded<remote>& _remote;
+    ss::sharded<cloud_storage::cache>& _cache;
     ss::sharded<cluster::topic_table>& _topic_state;
     ss::sharded<cluster::topics_frontend>& _topics_frontend;
+    ss::sharded<cluster::security_frontend>& _security_frontend;
+    ss::sharded<cluster::config_frontend>& _config_frontend;
     ss::sharded<cluster::topic_recovery_status_frontend>&
       _topic_recovery_status_frontend;
     // A map of the number of downloads expected per NTP. As downloads finish,

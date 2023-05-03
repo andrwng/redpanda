@@ -1334,8 +1334,11 @@ void application::wire_up_redpanda_services(model::node_id node_id) {
         construct_service(
           topic_recovery_service,
           std::ref(cloud_storage_api),
+          std::ref(shadow_index_cache),
           std::ref(controller->get_topics_state()),
           std::ref(controller->get_topics_frontend()),
+          std::ref(controller->get_security_frontend()),
+          std::ref(controller->get_config_frontend()),
           std::ref(topic_recovery_status_frontend))
           .get();
 

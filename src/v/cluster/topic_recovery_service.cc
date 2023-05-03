@@ -10,12 +10,24 @@
 
 #include "cluster/topic_recovery_service.h"
 
+#include "bytes/iostream.h"
+#include "cloud_storage/cache_service.h"
 #include "cloud_storage/logger.h"
 #include "cloud_storage/recovery_utils.h"
+#include "cloud_storage/remote_file.h"
 #include "cloud_storage/topic_manifest.h"
+#include "cloud_storage/types.h"
+#include "cluster/cloud_metadata/manifest_downloads.h"
+#include "cluster/config_frontend.h"
+#include "cluster/controller_snapshot.h"
+#include "cluster/security_frontend.h"
 #include "cluster/topic_recovery_status_frontend.h"
 #include "cluster/topics_frontend.h"
+#include "cluster/types.h"
+#include "model/timeout_clock.h"
+#include "serde/serde.h"
 
+#include <seastar/core/fstream.hh>
 #include <seastar/util/defer.hh>
 
 #include <boost/algorithm/string/classification.hpp>
@@ -119,14 +131,20 @@ recovery_task_config recovery_task_config::make_config() {
 
 topic_recovery_service::topic_recovery_service(
   ss::sharded<remote>& remote,
+  ss::sharded<cloud_storage::cache>& cache,
   ss::sharded<cluster::topic_table>& topic_state,
   ss::sharded<cluster::topics_frontend>& topics_frontend,
+  ss::sharded<cluster::security_frontend>& security_frontend,
+  ss::sharded<cluster::config_frontend>& config_frontend,
   ss::sharded<cluster::topic_recovery_status_frontend>&
     topic_recovery_status_frontend)
   : _config(recovery_task_config::make_config())
   , _remote{remote}
+  , _cache{cache}
   , _topic_state{topic_state}
   , _topics_frontend{topics_frontend}
+  , _security_frontend{security_frontend}
+  , _config_frontend{config_frontend}
   , _topic_recovery_status_frontend{topic_recovery_status_frontend}
   , _status_log(status_log_size) {
     push_status();
@@ -283,45 +301,127 @@ topic_recovery_service::start_bg_recovery_task(recovery_request request) {
 
     _recovery_request.emplace(request);
 
-    set_state(state::scanning_bucket);
-    vlog(cst_log.debug, "scanning bucket {}", _config.bucket);
-    auto bucket_contents_result = co_await collect_manifest_paths(
-      _remote.local(), _as, _config);
+    auto fib = retry_chain_node{
+      _as,
+      _config.operation_timeout_ms * list_api_timeout_multiplier,
+      _config.backoff_ms};
+    auto cluster_manifest
+      = co_await cluster::cloud_metadata::find_latest_manifest(
+        _remote.local(), _config.bucket, fib);
+    if (cluster_manifest.has_value()) {
+        // Download the controller snapshot.
+        const auto& controller_path_str
+          = cluster_manifest.value().controller_snapshot_path;
+        auto remote_controller_snapshot = remote_file(
+          _remote.local(),
+          _cache.local(),
+          _config.bucket,
+          remote_segment_path{controller_path_str},
+          fib,
+          "controller_snapshot");
 
-    if (bucket_contents_result.has_error()) {
-        auto error = recovery_error_ctx::make(
-          fmt::format("error while listing items"),
-          recovery_error_code::error_listing_items);
-        vlog(cst_log.error, "{}", error.context);
-        _recovery_request = std::nullopt;
-        set_state(state::inactive);
-        co_return error;
+        // Parse the controller snapshot from the downloaded file.
+        auto f = co_await remote_controller_snapshot.hydrate_readable_file();
+        auto f_size = co_await f.size();
+        ss::file_input_stream_options options;
+        auto input = ss::make_file_input_stream(f, options);
+        auto snap_buf_parser = iobuf_parser{
+          co_await read_iobuf_exactly(input, f_size)};
+        auto snapshot
+          = co_await serde::read_async<cluster::controller_snapshot>(
+            snap_buf_parser);
+
+        // Restore the security subsystem.
+        const auto& security_snap = snapshot.security;
+        for (const auto& user_cred : security_snap.user_credentials) {
+            // XXX: fix
+            co_await _security_frontend.local().create_user(
+              user_cred.username,
+              user_cred.credential,
+              model::timeout_clock::now()
+                + config::shard_local_cfg().create_topic_timeout_ms());
+        }
+        std::vector<security::acl_binding> acl_batch;
+        for (const auto& acl : security_snap.acls) {
+            acl_batch.emplace_back(acl);
+            if (acl_batch.size() >= 20) {
+                co_await _security_frontend.local().create_acls(
+                  std::move(acl_batch),
+                  model::timeout_clock::duration(
+                    config::shard_local_cfg().create_topic_timeout_ms()));
+                acl_batch.clear();
+            }
+        }
+        // XXX:
+        if (!acl_batch.empty()) {
+            co_await _security_frontend.local().create_acls(
+              std::move(acl_batch),
+              model::timeout_clock::duration(
+                config::shard_local_cfg().create_topic_timeout_ms()));
+            acl_batch.clear();
+        }
+
+        // Restore the configs subsystem.
+        const auto& config_snap = snapshot.config;
+        cluster::config_update_request req;
+        for (const auto& [config_name, config_val] : config_snap.values) {
+            req.upsert.emplace_back(config_name, config_val);
+        }
+        // XXX
+        co_await _config_frontend.local().patch(
+          std::move(req), model::timeout_clock::now() + 10000ms);
+
+        // Restore topics.
+        for (const auto& [topic_ns, topic] : snapshot.topics.topics) {
+            int expected = topic.partitions.size()
+                           * topic.metadata.configuration.replication_factor;
+            _download_counts.emplace(
+              topic_ns, topic_download_counts{expected, 0, 0});
+        }
+    } else {
+        set_state(state::scanning_bucket);
+        vlog(cst_log.debug, "scanning bucket {}", _config.bucket);
+        auto bucket_contents_result = co_await collect_manifest_paths(
+          _remote.local(), _as, _config);
+
+        if (bucket_contents_result.has_error()) {
+            auto error = recovery_error_ctx::make(
+              fmt::format("error while listing items"),
+              recovery_error_code::error_listing_items);
+            vlog(cst_log.error, "{}", error.context);
+            _recovery_request = std::nullopt;
+            set_state(state::inactive);
+            co_return error;
+        }
+
+        auto bucket_contents = bucket_contents_result.value();
+
+        auto manifests = co_await filter_existing_topics(
+          bucket_contents, request, model::ns{"kafka"});
+
+        if (manifests.empty()) {
+            vlog(cst_log.info, "exiting recovery, no topics to create");
+            _recovery_request = std::nullopt;
+            set_state(state::inactive);
+            co_return outcome::success();
+        }
+
+        vlog(cst_log.info, "found {} topics to create", manifests.size());
+        for (const auto& manifest : manifests) {
+            vlog(
+              cst_log.debug,
+              "topic manifest: {}",
+              manifest.get_manifest_path());
+        }
+        _download_counts.clear();
+
+        auto clear_fib = make_rtc(_as, _config);
+        co_await clear_recovery_results(
+          _remote.local(), _config.bucket, clear_fib, std::nullopt);
+        _downloaded_manifests.emplace(manifests);
+
+        populate_recovery_status();
     }
-
-    auto bucket_contents = bucket_contents_result.value();
-
-    auto manifests = co_await filter_existing_topics(
-      bucket_contents, request, model::ns{"kafka"});
-
-    if (manifests.empty()) {
-        vlog(cst_log.info, "exiting recovery, no topics to create");
-        _recovery_request = std::nullopt;
-        set_state(state::inactive);
-        co_return outcome::success();
-    }
-
-    vlog(cst_log.info, "found {} topics to create", manifests.size());
-    for (const auto& manifest : manifests) {
-        vlog(cst_log.debug, "topic manifest: {}", manifest.get_manifest_path());
-    }
-    _download_counts.clear();
-
-    auto clear_fib = make_rtc(_as, _config);
-    co_await clear_recovery_results(
-      _remote.local(), _config.bucket, clear_fib, std::nullopt);
-    _downloaded_manifests.emplace(manifests);
-
-    populate_recovery_status();
 
     set_state(state::creating_topics);
     vlog(cst_log.debug, "creating topics");
