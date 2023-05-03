@@ -93,11 +93,21 @@ download_or_create_manifest(
     }
     if (highest_meta_id == cluster_metadata_id{}) {
         // There are no existing manifests. Create a new one.
+        // We need to use the highest metadata ID so if the returned manifest
+        // is used as the basis for a new upload, it appears to be new and a
+        // recovery process can tell it was uploaded most recently.
         vlog(
           clusterlog.debug,
-          "No valid manifests found for cluster {}, creating new one",
+          "No valid manifests found for cluster {}, creating new one with "
+          "highest metadata ID",
           cluster_uuid());
+        auto latest_manifest = co_await find_latest_manifest(
+          remote, bucket, retry_node);
+        if (latest_manifest.has_value()) {
+            manifest.metadata_id = latest_manifest->metadata_id;
+        }
         manifest.cluster_uuid = cluster_uuid;
+
         co_return manifest;
     }
 
