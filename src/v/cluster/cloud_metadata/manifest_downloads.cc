@@ -151,4 +151,88 @@ ss::future<std::list<ss::sstring>> list_orphaned_by_manifest(
     co_return ret;
 }
 
+ss::future<std::optional<cluster_metadata_manifest>> find_latest_manifest(
+  cloud_storage::remote& remote,
+  const cloud_storage_clients::bucket_name& bucket,
+  retry_chain_node& retry_node) {
+    // Look for unique cluster UUIDs for which we have metadata.
+    auto cluster_prefix = "/cluster_metadata/";
+    auto list_res = co_await remote.list_objects(
+      bucket,
+      retry_node,
+      cloud_storage_clients::object_key(cluster_prefix),
+      std::nullopt);
+    if (list_res.has_error()) {
+        vlog(clusterlog.debug, "Error downloading manifest", list_res.error());
+        co_return std::nullopt;
+    }
+    // Examine all cluster metadata in this bucket.
+    auto& cluster_metadata_items = list_res.value().contents;
+    if (cluster_metadata_items.empty()) {
+        vlog(clusterlog.debug, "No manifests found in bucket {}", bucket());
+        co_return std::nullopt;
+    }
+
+    // Look through those that look like cluster metadata manifests and find
+    // the one with the highest metadata ID. This will be the returned to the
+    // caller.
+    model::cluster_uuid uuid_with_highest_meta_id{};
+    cluster_metadata_id highest_meta_id{};
+    for (const auto& item : cluster_metadata_items) {
+        std::smatch matches;
+        std::string k = item.key;
+        const auto matches_manifest_expr = std::regex_match(
+          k.cbegin(), k.cend(), matches, cluster_metadata_manifest_expr);
+        if (!matches_manifest_expr) {
+            continue;
+        }
+        const auto& cluster_uuid_str = matches[1].str();
+        const auto& meta_id_str = matches[2].str();
+        cluster_metadata_id meta_id;
+        model::cluster_uuid cluster_uuid;
+        try {
+            meta_id = cluster_metadata_id(std::stoi(meta_id_str.c_str()));
+        } catch (...) {
+            vlog(
+              clusterlog.debug,
+              "Ignoring invalid metadata ID: {}",
+              meta_id_str);
+            continue;
+        }
+        try {
+            auto u = boost::lexical_cast<uuid_t::underlying_t>(
+              cluster_uuid_str);
+            std::vector<uint8_t> uuid_vec{u.begin(), u.end()};
+            cluster_uuid = model::cluster_uuid(uuid_vec);
+        } catch (...) {
+            vlog(
+              clusterlog.debug,
+              "Ignoring invalid cluster UUID: {}",
+              cluster_uuid_str);
+            continue;
+            continue;
+        }
+        if (meta_id > highest_meta_id) {
+            highest_meta_id = meta_id;
+            uuid_with_highest_meta_id = cluster_uuid;
+        }
+    }
+    if (highest_meta_id == cluster_metadata_id{}) {
+        vlog(clusterlog.debug, "No valid manifests in bucket {}", bucket());
+        co_return std::nullopt;
+    }
+    cluster_metadata_manifest manifest;
+    auto manifest_res = co_await remote.download_manifest(
+      bucket,
+      cluster_manifest_key(uuid_with_highest_meta_id, highest_meta_id),
+      manifest,
+      retry_node);
+    if (manifest_res != cloud_storage::download_result::success) {
+        vlog(
+          clusterlog.debug, "Manifest download failed with {}", manifest_res);
+        co_return std::nullopt;
+    }
+    co_return manifest;
+}
+
 } // namespace cluster::cloud_metadata
