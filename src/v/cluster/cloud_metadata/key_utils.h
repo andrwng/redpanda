@@ -27,6 +27,9 @@ ss::sstring cluster_manifests_prefix(const model::cluster_uuid&);
 cloud_storage::remote_manifest_path
 cluster_manifest_key(const model::cluster_uuid&, const cluster_metadata_id&);
 
+cloud_storage::remote_segment_path
+controller_snapshot_key(const model::cluster_uuid&, const cluster_metadata_id&);
+
 ss::sstring
 cluster_metadata_prefix(const model::cluster_uuid&, const cluster_metadata_id&);
 
