@@ -213,6 +213,24 @@ ss::future<> uploader::upload_until_term_change() {
               synced_term,
               upload_result);
         }
+
+        // TODO: clean up older manifests and snapshots.
+        // XXX fix retry node
+        auto orphaned_by_manifest = co_await list_orphaned_by_manifest(
+          _remote, _cluster_uuid, _bucket, manifest, retry_node);
+        for (const auto& s : orphaned_by_manifest) {
+            if (co_await term_has_changed(synced_term)) {
+                co_return;
+            }
+            auto path = std::filesystem::path{s};
+            auto res = co_await _remote.delete_object(
+              _bucket, cloud_storage_clients::object_key{path}, retry_node);
+            if (res != cloud_storage::upload_result::success) {
+                vlog(
+                  clusterlog.warn, "Failed to delete orphaned metadata: {}", s);
+            }
+        }
+
         try {
             co_await ssx::sleep_abortable(_upload_interval_ms(), _as, term_as);
         } catch (const ss::sleep_aborted&) {
