@@ -1403,6 +1403,7 @@ void application::wire_up_redpanda_services(model::node_id node_id) {
       std::ref(metadata_cache),
       std::ref(_connection_cache),
       std::ref(controller->get_partition_leaders()),
+      node_id,
       std::ref(controller))
       .get();
 

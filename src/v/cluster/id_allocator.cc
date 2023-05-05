@@ -28,7 +28,13 @@ id_allocator::id_allocator(
 
 ss::future<allocate_id_reply>
 id_allocator::allocate_id(allocate_id_request&& req, rpc::streaming_context&) {
-    return _id_allocator_frontend.local().do_allocate_id(req.timeout);
+    auto timeout = req.timeout;
+    return _id_allocator_frontend.local()
+      .allocator_router()
+      .find_shard_and_process(
+        std::forward<allocate_id_request>(req),
+        model::partition_id(0),
+        timeout);
 }
 
 } // namespace cluster

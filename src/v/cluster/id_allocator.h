@@ -12,6 +12,7 @@
 #pragma once
 #include "cluster/fwd.h"
 #include "cluster/id_allocator_service.h"
+#include "cluster/types.h"
 
 #include <seastar/core/sharded.hh>
 
