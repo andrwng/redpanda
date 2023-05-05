@@ -411,6 +411,7 @@ ss::future<checked<model::term_id, tx_errc>> rm_stm::do_begin_tx(
       transaction_timeout_ms,
       tm,
       synced_term);
+    // XXX:
     // checking / setting pid fencing
     auto fence_it = _log_state.fence_pid_epoch.find(pid.get_id());
     if (fence_it == _log_state.fence_pid_epoch.end()) {
