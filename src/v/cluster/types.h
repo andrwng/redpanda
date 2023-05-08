@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "cluster/cloud_metadata/cluster_manifest.h"
 #include "cluster/errc.h"
 #include "cluster/fwd.h"
 #include "kafka/types.h"
@@ -2556,6 +2557,52 @@ struct bootstrap_cluster_cmd_data
     // the node that generated the bootstrap record.
     cluster_version founding_version{invalid_version};
     std::vector<model::broker> initial_nodes;
+};
+
+struct cluster_recovery_init_cmd_data
+  : serde::envelope<
+      cluster_recovery_init_cmd_data,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    friend bool operator==(
+      const cluster_recovery_init_cmd_data&,
+      const cluster_recovery_init_cmd_data&)
+      = default;
+
+    auto serde_fields() { return std::tie(manifest); }
+
+    // Cluster metadata manifest used to define the desired end state of the
+    // recovery.
+    cluster::cloud_metadata::cluster_metadata_manifest manifest;
+};
+
+struct cluster_recovery_start_cmd_data
+  : serde::envelope<
+      cluster_recovery_start_cmd_data,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    friend bool operator==(
+      const cluster_recovery_start_cmd_data&,
+      const cluster_recovery_start_cmd_data&)
+      = default;
+
+    auto serde_fields() { return std::tie(); }
+};
+
+struct cluster_recovery_stop_cmd_data
+  : serde::envelope<
+      cluster_recovery_stop_cmd_data,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    friend bool operator==(
+      const cluster_recovery_stop_cmd_data&,
+      const cluster_recovery_stop_cmd_data&)
+      = default;
+
+    auto serde_fields() { return std::tie(error_msg); }
+
+    // If set, the recovery is failed. Otherwise, it was a success.
+    std::optional<ss::sstring> error_msg;
 };
 
 enum class reconciliation_status : int8_t {
