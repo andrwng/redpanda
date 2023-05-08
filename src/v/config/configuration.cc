@@ -1351,6 +1351,18 @@ configuration::configuration()
       "Time interval to wait between cluster metadata uploads.",
       {.needs_restart = needs_restart::no, .visibility = visibility::tunable},
       60s)
+  , cloud_metadata_download_timeout_ms(
+      *this,
+      "cloud_metadata_download_timeout_ms",
+      "Timeout used to download the cluster metadata manifest.",
+      {.needs_restart = needs_restart::no, .visibility = visibility::tunable},
+      60s)
+  , cloud_metadata_download_backoff_ms(
+      *this,
+      "cloud_metadata_download_backoff_ms",
+      "Backoff used to retry downloads for the cluster metadata manifest",
+      {.needs_restart = needs_restart::no, .visibility = visibility::tunable},
+      5s)
   , cloud_storage_idle_threshold_rps(
       *this,
       "cloud_storage_idle_threshold_rps",

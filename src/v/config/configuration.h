@@ -272,6 +272,9 @@ struct configuration final : public config_store {
     property<std::chrono::milliseconds> cloud_storage_idle_timeout_ms;
     property<std::chrono::milliseconds>
       cloud_storage_cluster_metadata_upload_interval_ms;
+    // Cluster recovery
+    property<std::chrono::milliseconds> cloud_metadata_download_timeout_ms;
+    property<std::chrono::milliseconds> cloud_metadata_download_backoff_ms;
     property<double> cloud_storage_idle_threshold_rps;
     property<bool> cloud_storage_enable_segment_merging;
     property<size_t> cloud_storage_max_segments_pending_deletion_per_partition;
