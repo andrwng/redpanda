@@ -10,9 +10,11 @@
 #include "cluster/cluster_recovery_manager.h"
 
 #include "cluster/cloud_metadata/cluster_manifest.h"
+#include "cluster/cloud_metadata/manifest_downloads.h"
 #include "cluster/cluster_recovery_table.h"
 #include "cluster/cluster_utils.h"
 #include "cluster/commands.h"
+#include "config/configuration.h"
 #include "seastarx.h"
 
 #include <seastar/core/abort_source.hh>
@@ -42,13 +44,24 @@ ss::future<bool> cluster_recovery_manager::initialize_recovery() {
     if (_recovery_table.local().is_recovery_active()) {
         co_return false;
     }
-    // TODO: Download the manifest.
-    cloud_metadata::cluster_metadata_manifest manifest;
+    auto retry_node = retry_chain_node{
+      _sharded_as.local(),
+      config::shard_local_cfg().cloud_metadata_download_timeout_ms(),
+      config::shard_local_cfg().cloud_metadata_download_backoff_ms()};
+    const auto bucket = cloud_storage_clients::bucket_name{
+      config::shard_local_cfg().cloud_storage_bucket().value()};
+    auto cluster_manifest
+      = co_await cluster::cloud_metadata::find_latest_manifest(
+        _remote.local(), bucket, retry_node);
+
+    if (!cluster_manifest.has_value()) {
+        co_return false;
+    }
 
     // Replicate an update to start recovery. Once applied, this will update
     // the recovery table.
     cluster_recovery_init_cmd_data data;
-    data.manifest = std::move(manifest);
+    data.manifest = std::move(cluster_manifest.value());
     auto errc = co_await replicate_and_wait(
       _controller_stm,
       _feature_table,
