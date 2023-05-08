@@ -12,6 +12,7 @@
 
 #include "cluster/cloud_metadata/cluster_manifest.h"
 #include "cluster/controller_snapshot.h"
+#include "cluster/types.h"
 
 #include <seastar/core/chunked_fifo.hh>
 
@@ -56,8 +57,18 @@ public:
       cloud_metadata::cluster_metadata_manifest manifest)
       : manifest(std::move(manifest)) {}
 
+    bool is_active() const {
+        return !(status == status::complete || status == status::failed);
+    }
+
+    // Current state of this recovery.
     status status{status::initialized};
+
+    // Manifest that defines the desired end state of this recovery.
     cloud_metadata::cluster_metadata_manifest manifest{};
+
+    // Only applicable when failed.
+    std::optional<ss::sstring> error_msg;
 };
 
 // Tracks the state of recovery attempts performed on the cluster.
@@ -67,18 +78,16 @@ public:
 // reporting, or to install a guardrail while recovery is running).
 class cluster_recovery_table {
 public:
-    bool is_recovery_active() {
+    bool is_recovery_active() const {
         if (_states.empty()) {
             return false;
         }
-        const auto& latest_status = _states.back().status;
-        if (
-          latest_status == cluster_recovery_state::status::complete
-          || latest_status == cluster_recovery_state::status::failed) {
-            return false;
-        }
-        return true;
+        return _states.back().is_active();
     }
+
+    std::error_code apply(model::offset offset, cluster_recovery_init_cmd);
+    std::error_code apply(model::offset offset, cluster_recovery_start_cmd);
+    std::error_code apply(model::offset offset, cluster_recovery_stop_cmd);
 
     // TODO: fill me in!
     void fill_snapshot(controller_snapshot&) {}

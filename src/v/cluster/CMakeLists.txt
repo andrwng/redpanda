@@ -114,6 +114,8 @@ v_cc_library(
     security_manager.cc
     security_frontend.cc
     cluster_discovery.cc
+    cluster_recovery_manager.cc
+    cluster_recovery_table.cc
     controller_api.cc
     members_frontend.cc
     members_backend.cc
