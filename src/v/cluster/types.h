@@ -2564,6 +2564,7 @@ struct cluster_recovery_init_cmd_data
       cluster_recovery_init_cmd_data,
       serde::version<0>,
       serde::compat_version<0>> {
+    using rpc_adl_exempt = std::true_type;
     friend bool operator==(
       const cluster_recovery_init_cmd_data&,
       const cluster_recovery_init_cmd_data&)
@@ -2581,6 +2582,7 @@ struct cluster_recovery_start_cmd_data
       cluster_recovery_start_cmd_data,
       serde::version<0>,
       serde::compat_version<0>> {
+    using rpc_adl_exempt = std::true_type;
     friend bool operator==(
       const cluster_recovery_start_cmd_data&,
       const cluster_recovery_start_cmd_data&)
@@ -2594,6 +2596,7 @@ struct cluster_recovery_stop_cmd_data
       cluster_recovery_stop_cmd_data,
       serde::version<0>,
       serde::compat_version<0>> {
+    using rpc_adl_exempt = std::true_type;
     friend bool operator==(
       const cluster_recovery_stop_cmd_data&,
       const cluster_recovery_stop_cmd_data&)
