@@ -39,11 +39,15 @@ public:
     ss::future<> fill_snapshot(controller_snapshot&) const;
     ss::future<> apply_snapshot(model::offset, const controller_snapshot&);
 
+    ss::future<std::error_code> apply_update(model::record_batch b);
+
 private:
     static constexpr auto commands = make_commands_list<
       cluster_recovery_init_cmd,
       cluster_recovery_start_cmd,
       cluster_recovery_stop_cmd>();
+    bool is_batch_applicable(const model::record_batch& b) const;
+
 
     // Sends updates to each shard of the underlying recovery table.
     template<typename Cmd>

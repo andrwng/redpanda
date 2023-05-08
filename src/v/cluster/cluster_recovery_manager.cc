@@ -74,6 +74,19 @@ ss::future<bool> cluster_recovery_manager::initialize_recovery() {
     co_return true;
 }
 
+ss::future<std::error_code>
+cluster_recovery_manager::apply_update(model::record_batch b) {
+    auto offset = b.base_offset();
+    auto cmd = co_await cluster::deserialize(std::move(b), commands);
+    co_return co_await ss::visit(
+      [this, offset](auto cmd) { return apply_to_table(offset, std::move(cmd)); },
+      std::move(cmd));
+}
+bool cluster_recovery_manager::is_batch_applicable(const model::record_batch& b) const {
+    return b.header().type == model::record_batch_type::cluster_recovery_cmd;
+}
+
+
 ss::future<std::error_code> cluster_recovery_manager::apply_to_table(
   model::offset offset, cluster_recovery_init_cmd cmd) {
     return dispatch_updates_to_cores(offset, std::move(cmd));
