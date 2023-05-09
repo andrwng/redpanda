@@ -51,8 +51,6 @@ public:
     ss::future<> apply_snapshot(model::offset, const controller_snapshot&);
 
 private:
-
-
     // Sends updates to each shard of the underlying recovery table.
     template<typename Cmd>
     ss::future<std::error_code>
