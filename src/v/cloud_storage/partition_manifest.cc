@@ -627,6 +627,14 @@ bool partition_manifest::advance_start_kafka_offset(
     return true;
 }
 
+bool partition_manifest::advance_highest_producer_id(model::producer_id pid) {
+    if (_highest_producer_id < pid) {
+        return false;
+    }
+    _highest_producer_id = pid;
+    return true;
+}
+
 bool partition_manifest::advance_start_offset(model::offset new_start_offset) {
     const auto previous_start_offset = _start_offset;
 

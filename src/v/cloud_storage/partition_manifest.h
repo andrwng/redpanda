@@ -14,6 +14,7 @@
 #include "cloud_storage/types.h"
 #include "model/fundamental.h"
 #include "model/metadata.h"
+#include "model/record.h"
 #include "model/timestamp.h"
 #include "segment_meta_cstore.h"
 #include "serde/serde.h"
@@ -279,6 +280,12 @@ public:
     /// \returns true if start_offset was moved
     bool advance_start_kafka_offset(kafka::offset start_offset);
 
+    /// \brief Use the given producer ID to track the highest used so far by
+    /// this partition.
+    ///
+    /// \returns true if the highest producer ID was moved
+    bool advance_highest_producer_id(model::producer_id);
+
     /// Get segment if available or nullopt
     std::optional<segment_meta> get(const key& key) const;
     std::optional<segment_meta> get(const segment_name& name) const;
@@ -426,6 +433,11 @@ private:
     model::offset _archive_clean_offset;
     // Start kafka offset set by the DeleteRecords request
     kafka::offset _start_kafka_offset;
+
+    // Highest producer ID used by this partition. This gets aggregated across
+    // all partitions during cluster recovery time to determine a new starting
+    // id_allocator ID that is higher than any used so far.
+    model::producer_id _highest_producer_id;
 };
 
 } // namespace cloud_storage

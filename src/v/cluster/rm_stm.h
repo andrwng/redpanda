@@ -224,6 +224,8 @@ public:
     ss::future<fragmented_vector<rm_stm::tx_range>>
       aborted_transactions(model::offset, model::offset);
 
+    ss::future<model::producer_id> highest_producer_id();
+
     model::offset max_collectible_offset() override {
         return last_stable_offset();
     }

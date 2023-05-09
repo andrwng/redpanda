@@ -1567,9 +1567,10 @@ ss::future<ntp_archiver::upload_group_result> ntp_archiver::wait_uploads(
             // inline with our segment-adding batch.
             manifest_clean_offset = _projected_manifest_clean_at;
         }
+        auto highest_producer_id = co_await _parent.highest_producer_id();
 
         auto error = co_await _parent.archival_meta_stm()->add_segments(
-          mdiff, manifest_clean_offset, deadline, _as);
+          mdiff, manifest_clean_offset, highest_producer_id, deadline, _as);
         if (
           error != cluster::errc::success
           && error != cluster::errc::not_leader) {
@@ -2187,7 +2188,7 @@ ss::future<bool> ntp_archiver::do_upload_local(
 
     auto deadline = ss::lowres_clock::now() + _conf->manifest_upload_timeout;
     auto error = co_await _parent.archival_meta_stm()->add_segments(
-      {meta}, std::nullopt, deadline, _as);
+      {meta}, std::nullopt, model::producer_id{}, deadline, _as);
     if (error != cluster::errc::success && error != cluster::errc::not_leader) {
         vlog(
           _rtclog.warn,

@@ -1971,6 +1971,12 @@ rm_stm::aborted_transactions(model::offset from, model::offset to) {
       });
 }
 
+ss::future<model::producer_id> rm_stm::highest_producer_id() {
+    auto unit = co_await _state_lock.hold_read_lock();
+    // XXX:
+    co_return model::producer_id{};
+}
+
 ss::future<fragmented_vector<rm_stm::tx_range>>
 rm_stm::do_aborted_transactions(model::offset from, model::offset to) {
     fragmented_vector<rm_stm::tx_range> result;

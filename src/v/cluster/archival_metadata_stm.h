@@ -102,6 +102,7 @@ public:
     ss::future<std::error_code> add_segments(
       std::vector<cloud_storage::segment_meta>,
       std::optional<model::offset> clean_offset,
+      model::producer_id highest_pid,
       ss::lowres_clock::time_point deadline,
       ss::abort_source&);
 
@@ -222,6 +223,7 @@ private:
     ss::future<std::error_code> do_add_segments(
       std::vector<cloud_storage::segment_meta>,
       std::optional<model::offset> clean_offset,
+      model::producer_id highest_pid,
       ss::lowres_clock::time_point deadline,
       ss::abort_source&);
 
@@ -242,6 +244,7 @@ private:
     struct truncate_cmd;
     struct update_start_offset_cmd;
     struct update_start_kafka_offset_cmd;
+    struct update_highest_producer_id_cmd;
     struct cleanup_metadata_cmd;
     struct mark_clean_cmd;
     struct truncate_archive_init_cmd;
@@ -264,6 +267,7 @@ private:
     void apply_truncate_archive_init(const start_offset_with_delta& so);
     void apply_truncate_archive_commit(const start_offset& so);
     void apply_update_start_kafka_offset(kafka::offset so);
+    void apply_update_highest_producer_id(model::producer_id pid);
 
 private:
     prefix_logger _logger;

@@ -120,6 +120,12 @@ struct archival_metadata_stm::update_start_kafka_offset_cmd {
     using value = kafka::offset;
 };
 
+struct archival_metadata_stm::update_highest_producer_id_cmd {
+    static constexpr cmd_key key{8};
+
+    using value = model::producer_id;
+};
+
 struct archival_metadata_stm::snapshot
   : public serde::
       envelope<snapshot, serde::version<3>, serde::compat_version<0>> {
@@ -572,20 +578,28 @@ ss::future<std::error_code> archival_metadata_stm::mark_clean(
 ss::future<std::error_code> archival_metadata_stm::add_segments(
   std::vector<cloud_storage::segment_meta> segments,
   std::optional<model::offset> clean_offset,
+  model::producer_id highest_pid,
   ss::lowres_clock::time_point deadline,
   ss::abort_source& as) {
     auto now = ss::lowres_clock::now();
     auto timeout = now < deadline ? deadline - now : 0ms;
     return _lock.with(
       timeout,
-      [this, s = std::move(segments), clean_offset, deadline, &as]() mutable {
-          return do_add_segments(std::move(s), clean_offset, deadline, as);
+      [this,
+       s = std::move(segments),
+       clean_offset,
+       highest_pid,
+       deadline,
+       &as]() mutable {
+          return do_add_segments(
+            std::move(s), clean_offset, highest_pid, deadline, as);
       });
 }
 
 ss::future<std::error_code> archival_metadata_stm::do_add_segments(
   std::vector<cloud_storage::segment_meta> add_segments,
   std::optional<model::offset> clean_offset,
+  model::producer_id highest_pid,
   ss::lowres_clock::time_point deadline,
   ss::abort_source& as) {
     {
@@ -618,6 +632,13 @@ ss::future<std::error_code> archival_metadata_stm::do_add_segments(
         iobuf key_buf = serde::to_iobuf(
           archival_metadata_stm::mark_clean_cmd::key);
         iobuf val_buf = serde::to_iobuf(clean_offset.value());
+        b.add_raw_kv(std::move(key_buf), std::move(val_buf));
+    }
+
+    if (highest_pid != model::producer_id{}) {
+        iobuf key_buf = serde::to_iobuf(
+          archival_metadata_stm::update_highest_producer_id_cmd::key);
+        iobuf val_buf = serde::to_iobuf(highest_pid());
         b.add_raw_kv(std::move(key_buf), std::move(val_buf));
     }
 
@@ -695,6 +716,11 @@ ss::future<> archival_metadata_stm::apply(model::record_batch b) {
         case update_start_kafka_offset_cmd::key:
             apply_update_start_kafka_offset(
               serde::from_iobuf<update_start_kafka_offset_cmd::value>(
+                r.release_value()));
+            break;
+        case update_highest_producer_id_cmd::key:
+            apply_update_highest_producer_id(
+              serde::from_iobuf<update_highest_producer_id_cmd::value>(
                 r.release_value()));
             break;
         };
@@ -989,6 +1015,13 @@ void archival_metadata_stm::apply_update_start_kafka_offset(kafka::offset so) {
           "Start kafka offset updated to {}, start offset updated to {}",
           get_start_kafka_offset(),
           get_start_offset());
+    }
+}
+
+void archival_metadata_stm::apply_update_highest_producer_id(
+  model::producer_id pid) {
+    if (_manifest->advance_highest_producer_id(pid)) {
+        vlog(_logger.debug, "Updated highest producer ID to {}", pid());
     }
 }
 

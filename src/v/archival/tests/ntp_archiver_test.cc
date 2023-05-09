@@ -845,7 +845,11 @@ FIXTURE_TEST(test_upload_segments_leadership_transfer, archiver_fixture) {
     }
     part->archival_meta_stm()
       ->add_segments(
-        old_segments, std::nullopt, ss::lowres_clock::now() + 1s, never_abort)
+        old_segments,
+        std::nullopt,
+        model::producer_id{},
+        ss::lowres_clock::now() + 1s,
+        never_abort)
       .get();
 
     listen();
@@ -1039,7 +1043,11 @@ static void test_partial_upload_impl(
     }
     part->archival_meta_stm()
       ->add_segments(
-        all_segments, std::nullopt, ss::lowres_clock::now() + 1s, never_abort)
+        all_segments,
+        std::nullopt,
+        model::producer_id{},
+        ss::lowres_clock::now() + 1s,
+        never_abort)
       .get();
 
     segment_name s2name{
