@@ -29,12 +29,14 @@ cluster_recovery_manager::cluster_recovery_manager(
   ss::sharded<cloud_storage::remote>& remote,
   ss::sharded<cluster_recovery_table>& recovery_table,
   ss::sharded<controller_stm>& controller_stm,
-  ss::sharded<features::feature_table>& feature_table)
+  ss::sharded<features::feature_table>& feature_table,
+  consensus_ptr raft0)
   : _sharded_as(sharded_as)
   , _remote(remote)
   , _recovery_table(recovery_table)
   , _controller_stm(controller_stm)
-  , _feature_table(feature_table) {}
+  , _feature_table(feature_table)
+  , _raft0(std::move(raft0)) {}
 
 ss::future<bool> cluster_recovery_manager::initialize_recovery() {
     if (_recovery_table.local().is_recovery_active()) {
@@ -72,6 +74,27 @@ ss::future<bool> cluster_recovery_manager::initialize_recovery() {
         co_return false;
     }
     co_return true;
+}
+
+ss::future<bool> cluster_recovery_manager::recover_until_term_change() {
+    if (!_raft0->is_leader()) {
+        co_return false;
+    }
+    auto units = co_await ss::get_units(_sem, 1, _sharded_as.local());
+    auto synced_term = _raft0->term();
+    auto res = co_await _raft0->linearizable_barrier();
+    // If we couldn't heartbeat to a majority, or the term has changed, exit
+    // out of the loop.
+    if (!res.has_value() || synced_term != _raft0->term()) {
+        co_return false;
+    }
+
+    // Make sure we catch up to the committed offset.
+    const auto dirty_offset = _raft0->dirty_offset();
+    co_await _controller_stm.local().wait(
+      dirty_offset,
+      model::timeout_clock::time_point::max(),
+      _sharded_as.local());
 }
 
 ss::future<std::error_code>

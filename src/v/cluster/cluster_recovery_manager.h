@@ -31,10 +31,14 @@ public:
       ss::sharded<cloud_storage::remote>&,
       ss::sharded<cluster_recovery_table>&,
       ss::sharded<controller_stm>&,
-      ss::sharded<features::feature_table>&);
+      ss::sharded<features::feature_table>&,
+      consensus_ptr raft0);
 
     // Starts a recovery if one isn't already in progress.
     ss::future<bool> initialize_recovery();
+
+    // Runs through recovery for as long as this node is still leader.
+    ss::future<bool> recover_until_term_change();
 
     // Interface for mux_state_machine.
     static constexpr auto commands = make_commands_list<
@@ -76,6 +80,8 @@ private:
     // Controller state used to drive controller commands.
     ss::sharded<controller_stm>& _controller_stm;
     ss::sharded<features::feature_table>& _feature_table;
+
+    consensus_ptr _raft0;
 };
 
 } // namespace cluster
