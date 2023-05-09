@@ -224,7 +224,7 @@ public:
     ss::future<fragmented_vector<rm_stm::tx_range>>
       aborted_transactions(model::offset, model::offset);
 
-    ss::future<model::producer_id> highest_producer_id();
+    model::producer_id highest_producer_id() const;
 
     model::offset max_collectible_offset() override {
         return last_stable_offset();
@@ -953,6 +953,9 @@ private:
     config::binding<uint64_t> _max_concurrent_producer_ids;
     mutex _clean_old_pids_mtx;
     ss::metrics::metric_groups _metrics;
+
+    // Highest producer ID applied to this stm.
+    model::producer_id _highest_producer_id;
 };
 
 struct fence_batch_data {

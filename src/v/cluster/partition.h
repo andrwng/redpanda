@@ -251,7 +251,7 @@ public:
     ss::future<std::vector<rm_stm::tx_range>>
     aborted_transactions_cloud(const cloud_storage::offset_range& offsets);
 
-    ss::future<model::producer_id> highest_producer_id() {
+    model::producer_id highest_producer_id() {
         return _rm_stm->highest_producer_id();
     }
 

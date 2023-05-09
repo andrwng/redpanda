@@ -1971,10 +1971,8 @@ rm_stm::aborted_transactions(model::offset from, model::offset to) {
       });
 }
 
-ss::future<model::producer_id> rm_stm::highest_producer_id() {
-    auto unit = co_await _state_lock.hold_read_lock();
-    // XXX:
-    co_return model::producer_id{};
+model::producer_id rm_stm::highest_producer_id() const {
+    return _highest_producer_id;
 }
 
 ss::future<fragmented_vector<rm_stm::tx_range>>
@@ -2342,6 +2340,8 @@ void rm_stm::try_arm(time_point_type deadline) {
 void rm_stm::apply_fence(model::record_batch&& b) {
     auto batch_data = read_fence_batch(std::move(b));
 
+    _highest_producer_id = std::max(
+      _highest_producer_id, batch_data.bid.pid.get_id());
     auto [fence_it, _] = _log_state.fence_pid_epoch.try_emplace(
       batch_data.bid.pid.get_id(), batch_data.bid.pid.get_epoch());
     // using less-or-equal to update tx_seqs on every transaction
@@ -2393,6 +2393,7 @@ ss::future<> rm_stm::apply(model::record_batch b) {
 
 void rm_stm::apply_prepare(rm_stm::prepare_marker prepare) {
     auto pid = prepare.pid;
+    _highest_producer_id = std::max(_highest_producer_id, pid.get_id());
     _log_state.prepared.try_emplace(pid, prepare);
     _mem_state.expected.erase(pid);
     _mem_state.preparing.erase(pid);
