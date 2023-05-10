@@ -9,10 +9,11 @@
  */
 #pragma once
 
+#include <vector>
+
 #include "cluster/errc.h"
 #include "model/fundamental.h"
 #include "serde/envelope.h"
-#include "utils/fragmented_vector.h"
 
 #include <absl/container/node_hash_map.h>
 
@@ -71,7 +72,7 @@ struct offset_commit_request_topic
       serde::compat_version<0>> {
     using rpc_adl_exempt = std::true_type;
     model::topic name{};
-    fragmented_vector<offset_commit_request_partition> partitions{};
+    std::vector<offset_commit_request_partition> partitions{};
 
     auto serde_fields() { return std::tie(name, partitions); }
 
@@ -94,7 +95,7 @@ struct offset_commit_request_data
       serde::compat_version<0>> {
     using rpc_adl_exempt = std::true_type;
     ss::sstring group_id{};
-    fragmented_vector<offset_commit_request_topic> topics{};
+    std::vector<offset_commit_request_topic> topics{};
 
     auto serde_fields() { return std::tie(group_id, topics); }
 
@@ -117,7 +118,7 @@ struct offsets_recovery_request
       serde::version<0>,
       serde::compat_version<0>> {
     using rpc_adl_exempt = std::true_type;
-    fragmented_vector<offset_commit_request_data> group_data;
+    std::vector<offset_commit_request_data> group_data;
 
     auto serde_fields() { return std::tie(group_data); }
 
@@ -141,7 +142,7 @@ struct offsets_recovery_reply
     using rpc_adl_exempt = std::true_type;
 
     cluster::errc error{};
-    fragmented_vector<ss::sstring> failed_group_ids{};
+    std::vector<ss::sstring> failed_group_ids{};
 
     auto serde_fields() { return std::tie(error, failed_group_ids); }
 
