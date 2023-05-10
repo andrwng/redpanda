@@ -10,6 +10,7 @@
  */
 
 #pragma once
+#include "cluster/cloud_metadata/offsets_recovery_manager.h"
 #include "cluster/fwd.h"
 #include "kafka/protocol/delete_groups.h"
 #include "kafka/protocol/describe_groups.h"
@@ -115,7 +116,7 @@ namespace kafka {
  *
  *     - This is not yet implemented.
  */
-class group_manager {
+class group_manager : public cluster::cloud_metadata::offsets_recovery_manager {
 public:
     group_manager(
       model::topic_namespace,
@@ -178,6 +179,9 @@ public:
       delete_groups(std::vector<std::pair<model::ntp, group_id>>);
 
     ss::future<> reload_groups();
+
+    ss::future<cluster::cloud_metadata::offsets_recovery_reply> recover_offsets(
+      cluster::cloud_metadata::offsets_recovery_request) override;
 
 public:
     error_code validate_group_status(

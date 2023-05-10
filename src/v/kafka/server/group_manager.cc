@@ -17,6 +17,7 @@
 #include "config/configuration.h"
 #include "kafka/protocol/delete_groups.h"
 #include "kafka/protocol/describe_groups.h"
+#include "kafka/protocol/errors.h"
 #include "kafka/protocol/offset_commit.h"
 #include "kafka/protocol/offset_delete.h"
 #include "kafka/protocol/offset_fetch.h"
@@ -33,6 +34,7 @@
 #include <seastar/core/abort_source.hh>
 #include <seastar/core/coroutine.hh>
 #include <seastar/core/loop.hh>
+#include <seastar/util/later.hh>
 
 namespace kafka {
 
@@ -597,6 +599,65 @@ ss::future<> group_manager::reload_groups() {
         futures.push_back(std::move(f));
     }
     co_await ss::when_all_succeed(futures.begin(), futures.end());
+}
+
+ss::future<cluster::cloud_metadata::offsets_recovery_reply>
+group_manager::recover_offsets(
+  cluster::cloud_metadata::offsets_recovery_request req) {
+    vassert(!req.group_data.empty(), "Group data must not be empty");
+    cluster::cloud_metadata::offsets_recovery_reply reply;
+    auto p = _partitions.find(req.offsets_ntp);
+    if (p == _partitions.end()) {
+        reply.ec = cluster::errc::topic_not_exists;
+        co_return reply;
+    }
+    if (!p->second->partition->is_leader()) {
+        reply.ec = cluster::errc::not_leader;
+        co_return reply;
+    }
+    for (auto& g : req.group_data) {
+        offset_commit_request kafka_r;
+        kafka_r.ntp = req.offsets_ntp;
+        auto& kafka_data = kafka_r.data;
+        kafka_data.group_id = kafka::group_id(g.group_id);
+
+        auto& kafka_topics = kafka_data.topics;
+        for (auto& t : g.topics) {
+            offset_commit_request_topic kafka_t;
+            kafka_t.name = model::topic(t.name);
+            for (auto& p : t.partitions) {
+                offset_commit_request_partition kafka_p;
+                kafka_p.partition_index = p.partition_index;
+                kafka_p.committed_offset = p.committed_offset;
+                kafka_p.commit_timestamp = p.commit_timestamp;
+                kafka_p.committed_leader_epoch = kafka::leader_epoch(
+                  p.committed_leader_epoch);
+                kafka_p.committed_metadata = std::move(p.committed_metadata);
+                kafka_t.partitions.emplace_back(std::move(kafka_p));
+            }
+            kafka_topics.emplace_back(std::move(kafka_t));
+            co_await ss::maybe_yield();
+        }
+        auto stages = offset_commit(std::move(kafka_r));
+        co_await std::move(stages.dispatched);
+        auto kafka_res = co_await std::move(stages.result);
+        bool has_error = false;
+        for (const auto& kafka_t : kafka_res.data.topics) {
+            if (has_error) {
+                break;
+            }
+            for (const auto& kafka_p : kafka_t.partitions) {
+                if (has_error) {
+                    break;
+                }
+                if (kafka_p.error_code != kafka::error_code::none) {
+                    reply.failed_group_ids.emplace_back(g.group_id);
+                    has_error = true;
+                }
+            }
+        }
+    }
+    co_return reply;
 }
 
 ss::future<> group_manager::handle_partition_leader_change(
