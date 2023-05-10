@@ -1,0 +1,16 @@
+{
+    "namespace": "cluster::cloud_metadata",
+    "service_name": "offsets_recovery",
+    "includes": [
+        "cluster/cloud_metadata/consumer_offsets_types.h"
+    ],
+    "methods": [
+        {
+            "name": "offsets_recovery",
+            "input_type": "offsets_recovery_request",
+            "output_type": "offsets_recovery_reply"
+        }
+    ]
+}
+
+
