@@ -47,6 +47,9 @@ public:
     ss::future<stm_allocation_result>
     allocate_id(model::timeout_clock::duration timeout);
 
+    ss::future<stm_allocation_result>
+    reset_next_id(int64_t, model::timeout_clock::duration timeout);
+
 private:
     // legacy structs left for backward compatibility with the "old"
     // on-disk log format
@@ -95,6 +98,13 @@ private:
     ss::future<stm_allocation_result>
       do_allocate_id(model::timeout_clock::duration);
     ss::future<bool> set_state(int64_t, model::timeout_clock::duration);
+
+    // Like set_state() but meant to only be called during cluster recovery
+    // upon first starting up the id_allocator.
+    //
+    // Exposes a result interface to be returned to RPCs.
+    ss::future<stm_allocation_result>
+      force_set_state(int64_t, model::timeout_clock::duration);
 
     ss::future<> apply(model::record_batch) override;
 
