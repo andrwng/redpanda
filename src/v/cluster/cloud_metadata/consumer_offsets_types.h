@@ -9,13 +9,13 @@
  */
 #pragma once
 
-#include <vector>
-
 #include "cluster/errc.h"
 #include "model/fundamental.h"
 #include "serde/envelope.h"
 
 #include <absl/container/node_hash_map.h>
+
+#include <vector>
 
 namespace cluster::cloud_metadata {
 
@@ -141,10 +141,10 @@ struct offsets_recovery_reply
       serde::compat_version<0>> {
     using rpc_adl_exempt = std::true_type;
 
-    cluster::errc error{};
+    cluster::errc ec{};
     std::vector<ss::sstring> failed_group_ids{};
 
-    auto serde_fields() { return std::tie(error, failed_group_ids); }
+    auto serde_fields() { return std::tie(ec, failed_group_ids); }
 
     friend bool
     operator==(const offsets_recovery_reply&, const offsets_recovery_reply&)
@@ -153,10 +153,7 @@ struct offsets_recovery_reply
     friend std::ostream&
     operator<<(std::ostream& o, const offsets_recovery_reply& r) {
         fmt::print(
-          o,
-          "{{error: {}, failed_group_ids: {}}}",
-          r.error,
-          r.failed_group_ids);
+          o, "{{ec: {}, failed_group_ids: {}}}", r.ec, r.failed_group_ids);
         return o;
     }
 };

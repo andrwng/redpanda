@@ -16,6 +16,7 @@
 #include "cluster/offsets_recovery_rpc_service.h"
 #include "features/feature_table.h"
 #include "kafka/server/coordinator_ntp_mapper.h"
+#include "kafka/server/group_manager.h"
 #include "outcome.h"
 #include "rpc/fwd.h"
 #include "seastarx.h"
@@ -24,47 +25,22 @@
 
 namespace cluster::cloud_metadata {
 
-class offsets_recovery_router
-  : public leader_routing_frontend<
-      offsets_recovery_request,
-      offsets_recovery_reply,
-      offsets_recovery_client_protocol> {
-    offsets_recovery_router(
-      ss::sharded<cluster::shard_table>&,
-      ss::sharded<cluster::metadata_cache>&,
-      ss::sharded<rpc::connection_cache>&,
-      ss::sharded<partition_leaders_table>&,
-      const model::node_id);
-    ~offsets_recovery_router() = default;
-
-    ss::future<result<rpc::client_context<offsets_recovery_reply>>> dispatch(
-      offsets_recovery_client_protocol proto,
-      offsets_recovery_request,
-      model::timeout_clock::duration timeout) override;
-
-    ss::future<offsets_recovery_reply>
-    process(ss::shard_id, offsets_recovery_request req) override;
-
-    offsets_recovery_reply error_resp(cluster::errc e) const override {
-        return offsets_recovery_reply{{}, e};
-    }
-
-    ss::sstring process_name() const override { return "offsets recovery"; }
-};
+class offsets_recovery_frontend;
 
 // Directs an offset recovery request to the leader of the NTP managing the
 // requested groups.
-class offsets_recovery_rpc_handler {
+class offsets_recovery_rpc_handler : public offsets_recovery_service {
 public:
     offsets_recovery_rpc_handler(
-      ss::sharded<cluster::partition_manager>&,
-      ss::sharded<cluster::shard_table>&,
-      ss::sharded<cluster::metadata_cache>&,
-      ss::sharded<rpc::connection_cache>&,
-      ss::sharded<partition_leaders_table>&,
-      cluster::controller*,
-      ss::sharded<features::feature_table>&,
-      ss::sharded<kafka::coordinator_ntp_mapper>&);
+      ss::scheduling_group,
+      ss::smp_service_group,
+      ss::sharded<offsets_recovery_frontend>&);
+
+    ss::future<offsets_recovery_reply> virtual recover_offsets(
+      offsets_recovery_request&&, rpc::streaming_context&) final;
+
+private:
+    ss::sharded<offsets_recovery_frontend>& _frontend;
 };
 
 } // namespace cluster::cloud_metadata

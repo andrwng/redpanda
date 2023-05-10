@@ -184,6 +184,7 @@ v_cc_library(
     cloud_metadata/cluster_manifest.cc
     cloud_metadata/key_utils.cc
     cloud_metadata/manifest_downloads.cc
+    cloud_metadata/offsets_recovery_frontend.cc
     cloud_metadata/offsets_recovery_rpc_handler.cc
     cloud_metadata/uploader.cc
   DEPS

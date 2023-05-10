@@ -9,42 +9,32 @@
  * by the Apache License, Version 2.0
  */
 #include "cluster/cloud_metadata/offsets_recovery_rpc_handler.h"
+
 #include "cluster/cloud_metadata/consumer_offsets_types.h"
+#include "cluster/cloud_metadata/offsets_recovery_frontend.h"
 #include "cluster/offsets_recovery_rpc_service.h"
 
 namespace cluster::cloud_metadata {
 
-offsets_recovery_router::offsets_recovery_router(
-  ss::sharded<cluster::shard_table>& shard_table,
-  ss::sharded<cluster::metadata_cache>& metadata_cache,
-  ss::sharded<rpc::connection_cache>& connection_cache,
-  ss::sharded<partition_leaders_table>& leaders,
-  const model::node_id node_id)
-  : leader_routing_frontend<
-    offsets_recovery_request,
-    offsets_recovery_reply,
-    offsets_recovery_client_protocol>(
-    shard_table,
-    metadata_cache,
-    connection_cache,
-    leaders,
-    model::kafka_consumer_offsets_nt,
-    node_id,
-    config::shard_local_cfg().metadata_dissemination_retries.value(),
-    config::shard_local_cfg().metadata_dissemination_retry_delay_ms.value()) {}
+offsets_recovery_rpc_handler::offsets_recovery_rpc_handler(
+  ss::scheduling_group sg,
+  ss::smp_service_group ssg,
+  ss::sharded<offsets_recovery_frontend>& frontend)
+  : offsets_recovery_service(sg, ssg)
+  , _frontend(frontend) {}
 
 ss::future<offsets_recovery_reply>
-offsets_recovery_router::process(ss::shard_id, offsets_recovery_request) {
-    co_return offsets_recovery_reply{};
-}
-
-ss::future<result<rpc::client_context<offsets_recovery_reply>>>
-offsets_recovery_router::dispatch(
-  offsets_recovery_client_protocol proto,
-  offsets_recovery_request req,
-  model::timeout_clock::duration timeout) {
-    return proto.offsets_recovery(
-      std::move(req), rpc::client_opts(model::timeout_clock::now() + timeout));
+offsets_recovery_rpc_handler::recover_offsets(
+  offsets_recovery_request&& req, rpc::streaming_context& ctx) {
+    model::partition_id pid{};
+    auto err = _frontend.local().find_partition_id_for_req(req, pid);
+    if (err != cluster::errc::success) {
+        co_return offsets_recovery_reply{{}, err};
+    }
+    co_return co_await _frontend.local()
+      .recovery_router()
+      .find_shard_and_process(
+        std::forward<offsets_recovery_request>(req), pid, 30s);
 }
 
 } // namespace cluster::cloud_metadata
