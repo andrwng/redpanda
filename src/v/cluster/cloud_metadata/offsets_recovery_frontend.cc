@@ -85,13 +85,16 @@ cluster::errc offsets_recovery_frontend::find_partition_id_for_req(
     return cluster::errc::success;
 }
 
-ss::future<offsets_recovery_reply> offsets_recovery_frontend::recover_offsets_on_shard(
-  ss::shard_id shard_id, offsets_recovery_request req, model::timeout_clock::duration) {
-    return _group_manager.invoke_on(shard_id, [req = std::move(req)] (auto& manager) {
-        return manager.recover_offsets(std::move(req));
-    });
+ss::future<offsets_recovery_reply>
+offsets_recovery_frontend::recover_offsets_on_shard(
+  ss::shard_id shard_id,
+  offsets_recovery_request req,
+  model::timeout_clock::duration) {
+    return _group_manager.invoke_on(
+      shard_id, [req = std::move(req)](auto& manager) {
+          return manager.recover_offsets(std::move(req));
+      });
 }
-
 
 ss::future<offsets_recovery_reply> offsets_recovery_frontend::recover_offsets(
   offsets_recovery_request req, model::timeout_clock::duration timeout) {
