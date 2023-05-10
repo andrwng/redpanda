@@ -118,9 +118,10 @@ struct offsets_recovery_request
       serde::version<0>,
       serde::compat_version<0>> {
     using rpc_adl_exempt = std::true_type;
+    model::ntp offsets_ntp;
     std::vector<offset_commit_request_data> group_data;
 
-    auto serde_fields() { return std::tie(group_data); }
+    auto serde_fields() { return std::tie(offsets_ntp, group_data); }
 
     friend bool
     operator==(const offsets_recovery_request&, const offsets_recovery_request&)
@@ -128,7 +129,11 @@ struct offsets_recovery_request
 
     friend std::ostream&
     operator<<(std::ostream& o, const offsets_recovery_request& r) {
-        fmt::print(o, "{{group_data: {}}}", r.group_data);
+        fmt::print(
+          o,
+          "{{offsets_ntp: {}, group_data: {}}}",
+          r.offsets_ntp,
+          r.group_data);
         return o;
     }
 };
