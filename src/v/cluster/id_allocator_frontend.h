@@ -57,6 +57,43 @@ private:
     id_allocator_frontend& _frontend;
 };
 
+class id_reset_router
+  : public leader_routing_frontend<
+      reset_id_allocator_request,
+      reset_id_allocator_reply,
+      id_allocator_client_protocol> {
+public:
+    id_reset_router(
+      id_allocator_frontend&,
+      ss::sharded<cluster::shard_table>&,
+      ss::sharded<cluster::metadata_cache>&,
+      ss::sharded<rpc::connection_cache>&,
+      ss::sharded<partition_leaders_table>&,
+      const model::node_id);
+    ~id_reset_router() = default;
+
+    ss::future<result<rpc::client_context<reset_id_allocator_reply>>> dispatch(
+      id_allocator_client_protocol proto,
+      reset_id_allocator_request req,
+      model::timeout_clock::duration timeout) override {
+        return proto.reset_id_allocator(
+          std::move(req),
+          rpc::client_opts(model::timeout_clock::now() + timeout));
+    }
+
+    ss::future<reset_id_allocator_reply>
+    process(ss::shard_id, reset_id_allocator_request req) override;
+
+    reset_id_allocator_reply error_resp(cluster::errc e) const override {
+        return reset_id_allocator_reply{e};
+    }
+
+    ss::sstring process_name() const override { return "id allocation"; }
+
+private:
+    id_allocator_frontend& _frontend;
+};
+
 // id_allocator_frontend is an frontend of the id_allocator_stm,
 // an engine behind the id_allocator service.
 //
@@ -88,9 +125,10 @@ public:
     ss::future<> stop() { return _allocator_router.shutdown(); }
 
     allocate_id_router& allocator_router() { return _allocator_router; }
+    id_reset_router& reset_router() { return _reset_router; }
 
     template<typename id_allocator_func>
-    ss::future<allocate_id_reply>
+    ss::future<id_allocator_stm::stm_allocation_result>
     run_on_shard(ss::shard_id, id_allocator_func func);
 
 private:
@@ -100,6 +138,7 @@ private:
     std::unique_ptr<cluster::controller>& _controller;
 
     allocate_id_router _allocator_router;
+    id_reset_router _reset_router;
 
     // Sets the underlying stm's next id to the given id, returning an error if
     // there was a problem (e.g. not leader, timed out, etc).

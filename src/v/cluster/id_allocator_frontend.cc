@@ -11,6 +11,7 @@
 
 #include "cluster/controller.h"
 #include "cluster/id_allocator_service.h"
+#include "cluster/id_allocator_stm.h"
 #include "cluster/logger.h"
 #include "cluster/members_table.h"
 #include "cluster/metadata_cache.h"
@@ -58,6 +59,27 @@ allocate_id_router::allocate_id_router(
     config::shard_local_cfg().metadata_dissemination_retry_delay_ms.value())
   , _frontend(frontend) {}
 
+id_reset_router::id_reset_router(
+  id_allocator_frontend& frontend,
+  ss::sharded<cluster::shard_table>& shard_table,
+  ss::sharded<cluster::metadata_cache>& metadata_cache,
+  ss::sharded<rpc::connection_cache>& connection_cache,
+  ss::sharded<partition_leaders_table>& leaders,
+  const model::node_id node_id)
+  : leader_routing_frontend<
+    reset_id_allocator_request,
+    reset_id_allocator_reply,
+    id_allocator_client_protocol>(
+    shard_table,
+    metadata_cache,
+    connection_cache,
+    leaders,
+    model::id_allocator_nt,
+    node_id,
+    config::shard_local_cfg().metadata_dissemination_retries.value(),
+    config::shard_local_cfg().metadata_dissemination_retry_delay_ms.value())
+  , _frontend(frontend) {}
+
 ss::future<result<rpc::client_context<allocate_id_reply>>>
 allocate_id_router::dispatch(
   id_allocator_client_protocol proto,
@@ -69,10 +91,33 @@ allocate_id_router::dispatch(
 
 ss::future<allocate_id_reply>
 allocate_id_router::process(ss::shard_id shard, allocate_id_request req) {
-    auto timeout = req.timeout;
-    return _frontend.run_on_shard(shard, [timeout](id_allocator_stm& stm) {
-        return stm.allocate_id(timeout);
-    });
+    auto res = co_await _frontend.run_on_shard(
+      shard, [timeout = req.timeout](id_allocator_stm& stm) {
+          return stm.allocate_id(timeout);
+      });
+    if (res.raft_status == raft::errc::success) {
+        co_return allocate_id_reply{res.id, errc::success};
+    }
+    if (res.raft_status == raft::errc::group_not_exists) {
+        co_return allocate_id_reply{0, errc::topic_not_exists};
+    }
+    co_return allocate_id_reply{0, errc::replication_error};
+}
+
+ss::future<reset_id_allocator_reply>
+id_reset_router::process(ss::shard_id shard, reset_id_allocator_request req) {
+    auto res = co_await _frontend.run_on_shard(
+      shard,
+      [timeout = req.timeout, id = req.producer_id](id_allocator_stm& stm) {
+          return stm.reset_next_id(id, timeout);
+      });
+    if (res.raft_status == raft::errc::success) {
+        co_return reset_id_allocator_reply{errc::success};
+    }
+    if (res.raft_status == raft::errc::group_not_exists) {
+        co_return reset_id_allocator_reply{errc::topic_not_exists};
+    }
+    co_return reset_id_allocator_reply{errc::replication_error};
 }
 
 id_allocator_frontend::id_allocator_frontend(
@@ -89,6 +134,8 @@ id_allocator_frontend::id_allocator_frontend(
   , _metadata_cache(metadata_cache)
   , _controller(controller)
   , _allocator_router(
+      *this, shard_table, metadata_cache, connection_cache, leaders, node_id)
+  , _reset_router(
       *this, shard_table, metadata_cache, connection_cache, leaders, node_id) {}
 
 ss::future<allocate_id_reply>
@@ -112,8 +159,10 @@ id_allocator_frontend::allocate_id(model::timeout_clock::duration timeout) {
 }
 
 template<typename id_allocator_func>
-ss::future<allocate_id_reply> id_allocator_frontend::run_on_shard(
+ss::future<id_allocator_stm::stm_allocation_result>
+id_allocator_frontend::run_on_shard(
   ss::shard_id shard, id_allocator_func func) {
+    using result_t = id_allocator_stm::stm_allocation_result;
     return _partition_manager.invoke_on(
       shard, _ssg, [func](cluster::partition_manager& mgr) mutable {
           auto partition = mgr.get(model::id_allocator_ntp);
@@ -122,8 +171,8 @@ ss::future<allocate_id_reply> id_allocator_frontend::run_on_shard(
                 clusterlog.warn,
                 "can't get partition by {} ntp",
                 model::id_allocator_ntp);
-              return ss::make_ready_future<allocate_id_reply>(
-                allocate_id_reply{0, errc::topic_not_exists});
+              return ss::make_ready_future<result_t>(
+                result_t{0, raft::errc::group_not_exists});
           }
           auto stm = partition->id_allocator_stm();
           if (!stm) {
@@ -131,19 +180,17 @@ ss::future<allocate_id_reply> id_allocator_frontend::run_on_shard(
                 clusterlog.warn,
                 "can't get id allocator stm of the {}' partition",
                 model::id_allocator_ntp);
-              return ss::make_ready_future<allocate_id_reply>(
-                allocate_id_reply{0, errc::topic_not_exists});
+              return ss::make_ready_future<result_t>(
+                result_t{0, raft::errc::group_not_exists});
           }
           return func(*stm).then([](id_allocator_stm::stm_allocation_result r) {
               if (r.raft_status != raft::errc::success) {
                   vlog(
                     clusterlog.warn,
-                    "allocate id stm call failed with {}",
+                    "id allocator stm call failed with {}",
                     raft::make_error_code(r.raft_status).message());
-                  return allocate_id_reply{r.id, errc::replication_error};
               }
-
-              return allocate_id_reply{r.id, errc::success};
+              return r;
           });
       });
 }
