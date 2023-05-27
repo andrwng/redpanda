@@ -19,7 +19,7 @@
 #include <seastar/core/gate.hh>
 #include <seastar/util/log.hh>
 
-namespace raft {
+namespace cluster {
 
 class consensus;
 
@@ -36,7 +36,7 @@ class consensus;
 class log_eviction_stm {
 public:
     log_eviction_stm(
-      consensus*,
+      raft::consensus*,
       ss::logger&,
       ss::lw_shared_ptr<storage::stm_manager>,
       ss::abort_source&);
@@ -68,4 +68,4 @@ private:
     model::offset _requested_eviction_offset;
 };
 
-} // namespace raft
+} // namespace cluster
