@@ -68,6 +68,7 @@ enum class errc : int16_t {
     no_partition_assignments,
     failed_to_create_partition,
     partition_operation_failed,
+    invalid_truncation_offset,
 };
 struct errc_category final : public std::error_category {
     const char* name() const noexcept final { return "cluster::errc"; }
@@ -195,6 +196,8 @@ struct errc_category final : public std::error_category {
         case errc::partition_operation_failed:
             return "Generic failure occurred during partition operation "
                    "execution";
+        case errc::invalid_truncation_offset:
+            return "Invalid truncation offset parameter to prefix_truncate";
         }
         return "cluster::errc::unknown";
     }
