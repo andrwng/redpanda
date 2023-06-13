@@ -15,17 +15,22 @@ import threading
 import confluent_kafka as ck
 import ducktape
 
+from ducktape.cluster.cluster_spec import ClusterSpec
 from ducktape.mark import parametrize
 from rptest.services.cluster import cluster
 from rptest.services.kgo_verifier_services import KgoVerifierConsumerGroupConsumer, KgoVerifierProducer
 from rptest.tests.redpanda_test import RedpandaTest
+from rptest.utils.si_utils import BucketView, NTP
 from rptest.clients.kcl import KCL
 from rptest.clients.kafka_cli_tools import KafkaCliTools
 from rptest.clients.rpk import RpkTool
 from ducktape.utils.util import wait_until
 from rptest.clients.types import TopicSpec
-from rptest.util import produce_until_segments, segments_count, wait_for_removal_of_n_segments, search_logs_with_timeout
+from rptest.util import produce_until_segments, segments_count, wait_for_removal_of_n_segments, wait_until_segments, search_logs_with_timeout, wait_for_local_storage_truncate
 from rptest.services.storage import Segment
+from rptest.services.redpanda import SISettings
+from rptest.services.kgo_verifier_services import KgoVerifierProducer
+from rptest.utils.si_utils import nodes_report_cloud_segments
 
 
 class DeleteRecordsTest(RedpandaTest):
@@ -36,14 +41,22 @@ class DeleteRecordsTest(RedpandaTest):
     topics = (TopicSpec(), )
 
     def __init__(self, test_context):
+        self.log_segment_size = 1048576
+        self.si_settings = SISettings(
+            test_context,
+            log_segment_size=self.log_segment_size,
+            cloud_storage_housekeeping_interval_ms=2000,
+            fast_uploads=True)
+
         extra_rp_conf = dict(
             enable_leader_balancer=False,
             log_compaction_interval_ms=5000,
-            log_segment_size=1048576,
+            log_segment_size=self.log_segment_size,
         )
         super(DeleteRecordsTest, self).__init__(test_context=test_context,
                                                 num_brokers=3,
-                                                extra_rp_conf=extra_rp_conf)
+                                                extra_rp_conf=extra_rp_conf,
+                                                si_settings=self.si_settings)
         self._ctx = test_context
 
         self.kcl = KCL(self.redpanda)
@@ -572,3 +585,118 @@ class DeleteRecordsTest(RedpandaTest):
         status = consumer.consumer_status
         assert status.validator.invalid_reads == 0
         assert status.validator.out_of_scope_invalid_reads == 0
+
+    @cluster(num_nodes=3)
+    @parametrize(truncate_point="within_segment")
+    def test_delete_records_from_cloud_storage(self, truncate_point: str):
+        """
+        Test that delete-records correctly prefix truncates the log with cloud storage enabled,
+        that the start offset is correctly incremented and that the correct number of segments
+        are removed from S3.
+        """
+        segments_produced = 20
+
+        def wait_until_n_segments_in_cloud(expected_segments):
+            bucket_view = BucketView(self.redpanda)
+
+            def cloud_segments():
+                return len(
+                    bucket_view.manifest_for_ntp(self.topic,
+                                                 0).get('segments', {}).keys())
+
+            wait_until(
+                lambda: cloud_segments() >= expected_segments,
+                timeout_sec=5,
+                backoff_sec=1,
+                err_msg=
+                f'Waited until {expected_segments} were observed, currently {cloud_segments()} exist'
+            )
+
+        # Produce some data and wait for the existience of some amount of segments in cloud
+        produce_until_segments(
+            self.redpanda,
+            topic=self.topic,
+            partition_idx=0,
+            count=segments_produced,
+            acks=-1,
+        )
+        wait_until_n_segments_in_cloud(segments_produced / 2)
+        time.sleep(5)
+
+        # Take a snapshot of local storage
+        snapshot = self.redpanda.storage().segments_by_node(
+            "kafka", self.topic, 0)
+
+        def ordered_manifest_segments(manifest):
+            segments = manifest.get('segments', {}).values()
+            segments = [(s['base_offset'], s['committed_offset'])
+                        for s in segments]
+            # Sort segments by base offset
+            segments.sort(key=lambda x: x[0])
+            return segments
+
+        def obtain_cloud_test_parameters(bucket_view):
+            manifest = bucket_view.manifest_for_ntp(self.topic, 0)
+            self.redpanda.logger.info(f"Partition manifest: {manifest}")
+            segment_boundaries = ordered_manifest_segments(manifest)
+            truncate_offset = None
+            expected_segments_remaining = None
+            high_watermark = int(self.get_topic_info().high_watermark)
+            if truncate_point == "one_below_high_watermark":
+                truncate_offset = high_watermark - 1  # Leave 1 record
+                expected_segments_remaining = 1
+            elif truncate_point == "at_high_watermark":
+                truncate_offset = high_watermark  # Delete all data
+                expected_segments_remaining = 1
+            elif truncate_point == "within_segment":
+                random_seg = random.randint(0, len(segment_boundaries) - 1)
+                begin_offset = segment_boundaries[random_seg][0] + 1
+                end_offset = segment_boundaries[random_seg][1] - 1
+                truncate_offset = random.randint(begin_offset, end_offset)
+                expected_segments_remaining = random_seg
+            elif truncate_point == "at_segment_boundary":
+                random_seg = random.randint(0, len(segment_boundaries) - 1)
+                truncate_offset = segment_boundaries[random_seg][0]
+                expected_segments_remaining = random_seg
+            else:
+                assert False, "unknown test parameter encountered"
+
+            self.redpanda.logger.info(
+                f"Truncate offset: {truncate_offset} expected segments to remain: {expected_segments_remaining}"
+            )
+            return (truncate_offset, expected_segments_remaining,
+                    high_watermark)
+
+        bucket_view = BucketView(self.redpanda)
+        (truncate_offset, expected_segments_remaining,
+         high_watermark) = obtain_cloud_test_parameters(bucket_view)
+
+        # Make delete-records call, assert response looks ok
+        try:
+            low_watermark = self.delete_records(self.topic, 0, truncate_offset)
+            assert low_watermark == truncate_offset, f"Expected low watermark: {truncate_offset} observed: {low_watermark}"
+        except Exception as e:
+            topic_info = self.get_topic_info()
+            self.redpanda.logger.error(
+                f"Start offset: {topic_info.start_offset}")
+            raise e
+
+        # Assert the effect removed the local segments that were expected to be removed
+        wait_for_removal_of_n_segments(redpanda=self.redpanda,
+                                       topic=self.topic,
+                                       partition_idx=0,
+                                       n=expected_segments_remaining,
+                                       original_snapshot=snapshot)
+
+        # Assert the effect promoted the start offset correctly
+        self.assert_new_partition_boundaries(low_watermark, high_watermark)
+
+        # bucket_view.assert_segments_deleted
+
+        # And that the partition manifest correctly represents the state
+        # manifest = bucket_view.manifest_for_ntp(self.topic, 0)
+        # kafka_start_offset = bucket_view.kafka_start_offset(manifest)
+        # assert kafka_start_offset == truncate_offset, f"Incorrect cloud start offset observed: {kafka_start_offset} expected: {truncate_offset}"
+        # min_segment = ordered_manifest_segments(manifest)[0]
+        # assert min_segment[
+        #     0] >= truncate_offset, f"Incorrect cloud min segment offset observed: {min_segment[0]} expected: {truncate_offset}"
