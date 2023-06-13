@@ -92,6 +92,13 @@ public:
         return _raft->make_reader(std::move(config), deadline);
     }
 
+    ss::future<bool> sync_start_offset() {
+        if (_log_eviction_stm) {
+            co_return co_await _log_eviction_stm->sync_effective_start();
+        }
+        co_return true;
+    }
+
     model::offset start_offset() const {
         if (_log_eviction_stm) {
             return _log_eviction_stm->effective_start_offset();

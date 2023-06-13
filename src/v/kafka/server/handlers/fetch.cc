@@ -77,6 +77,10 @@ static ss::future<read_result> read_from_partition(
     if (unlikely(!lso)) {
         co_return read_result(lso.error());
     }
+    bool synced = co_await part.sync_start_offset();
+    if (!synced) {
+        co_return read_result(error_code::request_timed_out);
+    }
     auto hw = part.high_watermark();
     auto start_o = part.start_offset();
     // if we have no data read, return fast

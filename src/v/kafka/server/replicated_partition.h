@@ -37,6 +37,24 @@ public:
 
     const model::ntp& ntp() const final { return _partition->ntp(); }
 
+    ss::future<bool> sync_start_offset() {
+        if (
+          _partition->is_read_replica_mode_enabled()
+          && _partition->cloud_data_available()) {
+            co_return true;
+        }
+
+        auto local_kafka_start_offset = _translator->from_log_offset(
+          _partition->start_offset());
+        if (
+          _partition->is_remote_fetch_enabled()
+          && _partition->cloud_data_available()
+          && (_partition->start_cloud_offset() < local_kafka_start_offset)) {
+            co_return true;
+        }
+        co_return co_await _partition->sync_start_offset();
+    }
+
     model::offset start_offset() const final {
         if (
           _partition->is_read_replica_mode_enabled()

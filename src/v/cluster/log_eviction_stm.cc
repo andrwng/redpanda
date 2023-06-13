@@ -46,6 +46,15 @@ ss::future<> log_eviction_stm::start() {
     return persisted_stm::start();
 }
 
+ss::future<bool> log_eviction_stm::sync_effective_start() {
+    /// Call this method to ensure followers have processed up until the most
+    /// recent known version of the special batch. This is particularly useful
+    /// to know if the start offset is up to date in the case leadership has
+    /// recently changed for example.
+    static const auto sync_effective_start_timeout = 5s;
+    return sync(sync_effective_start_timeout);
+}
+
 model::offset log_eviction_stm::effective_start_offset() const {
     vassert(
       _effective_start_offset >= _raft->last_snapshot_index(),

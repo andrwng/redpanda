@@ -106,6 +106,15 @@ static ss::future<list_offset_partition_response> list_offsets_partition(
      * that the actual timestamp be returned. only the offset is required.
      */
     if (timestamp == list_offsets_request::earliest_timestamp) {
+        // using sync_start checks that all peers have processed the most known
+        // version of the start offset, in case this node have recently become
+        // the leader it will not return a stale result for start_offset
+        auto synced = co_await kafka_partition->sync_start_offset();
+        if (!synced) {
+            co_return list_offsets_response::make_partition(
+              ktp.get_partition(), error_code::unknown_server_error);
+        }
+
         co_return list_offsets_response::make_partition(
           ktp.get_partition(),
           model::timestamp(-1),
