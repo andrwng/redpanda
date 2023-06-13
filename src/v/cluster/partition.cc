@@ -182,27 +182,56 @@ ss::future<std::error_code> partition::prefix_truncate(
         throw std::runtime_error(
           "Partition not prefix-truncatable, retention settings not applied");
     }
-    if (_archival_meta_stm) {
-        throw std::runtime_error(
-          "Cannot yet prefix-truncate cloud storage enabled partitions");
-    }
     if (!feature_table().local().is_active(features::feature::delete_records)) {
         co_return cluster::errc::feature_disabled;
     }
-    const auto within_bounds = [this](model::offset kafka_truncation_offset) {
-        const auto& translator = _raft->get_offset_translator_state();
-        const auto kafka_start_offset = translator->from_log_offset(
-          start_offset());
-        const auto kafka_high_offset = translator->from_log_offset(
-          model::next_offset(_raft->last_visible_index()));
-        return kafka_truncation_offset > kafka_start_offset
-               && kafka_truncation_offset <= kafka_high_offset;
-    };
-    if (!within_bounds(truncation_offset)) {
+
+    const auto within_local_bounds =
+      [this](model::offset kafka_truncation_offset) {
+          const auto& translator = _raft->get_offset_translator_state();
+          const auto kafka_start_offset = translator->from_log_offset(
+            start_offset());
+          const auto kafka_high_offset = translator->from_log_offset(
+            model::next_offset(_raft->last_visible_index()));
+          return kafka_truncation_offset > kafka_start_offset
+                 && kafka_truncation_offset <= kafka_high_offset;
+      };
+
+    const auto within_cloud_storage_bounds =
+      [this](model::offset kafka_truncation_offset) {
+          return kafka_truncation_offset > start_cloud_offset()
+                 && kafka_truncation_offset <= next_cloud_offset();
+      };
+
+    /// If the topic is cloud storage enabled the data may either exist in the
+    /// cloud or exist in the cloud and locally in which case, two prefix
+    /// truncation requests will need to be performed.
+    if (within_local_bounds(truncation_offset)) {
+        const auto err = co_await _log_eviction_stm->truncate(
+          truncation_offset, deadline, _as);
+        if (err || !_archival_meta_stm) {
+            co_return err;
+        }
+    } else if (!_archival_meta_stm) {
         co_return make_error_code(errc::invalid_truncation_offset);
     }
-    co_return co_await _log_eviction_stm->truncate(
-      truncation_offset, deadline, _as);
+
+    const auto cs_mode = get_cloud_storage_mode();
+    if (
+      cs_mode != cloud_storage_mode::full
+      && cs_mode != cloud_storage_mode::write_only) {
+        throw std::runtime_error(
+          "Write permissions are needed to prefix-truncate cloud_storage "
+          "enabled topics");
+    }
+
+    if (!within_cloud_storage_bounds(truncation_offset)) {
+        co_return make_error_code(errc::invalid_truncation_offset);
+    }
+    auto ec = co_await _archival_meta_stm->truncate(
+      kafka::offset(truncation_offset), deadline, _as);
+    vlog(clusterlog.info, "Start offset: {}", start_cloud_offset());
+    co_return ec;
 }
 
 ss::future<std::vector<rm_stm::tx_range>> partition::aborted_transactions_cloud(

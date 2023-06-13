@@ -14,6 +14,7 @@
 #include "cluster/metadata_cache.h"
 #include "cluster/partition_manager.h"
 #include "cluster/shard_table.h"
+#include "kafka/server/replicated_partition.h"
 #include "model/fundamental.h"
 
 #include <vector>
@@ -58,15 +59,6 @@ validate_at_topic_level(request_context& ctx, const delete_records_topic& t) {
         return (*flags & model::cleanup_policy_bitflags::deletion)
                == model::cleanup_policy_bitflags::deletion;
     };
-    const auto is_cloud_enabled = [&ctx](const delete_records_topic& t) {
-        const auto cfg = ctx.metadata_cache().get_topic_cfg(
-          model::topic_namespace_view(model::kafka_namespace, t.name));
-        if (!cfg) {
-            return false;
-        }
-        const auto si_flags = cfg->properties.shadow_indexing;
-        return si_flags && *si_flags != model::shadow_indexing_mode::disabled;
-    };
     const auto is_internal_topic = [](const delete_records_topic& t) {
         const auto& internal_topics
           = config::shard_local_cfg().kafka_nodelete_topics();
@@ -82,7 +74,7 @@ validate_at_topic_level(request_context& ctx, const delete_records_topic& t) {
           t, error_code::cluster_authorization_failed);
     } else if (!is_deletable(t)) {
         return make_partition_errors(t, error_code::policy_violation);
-    } else if (is_cloud_enabled(t) || is_internal_topic(t)) {
+    } else if (is_internal_topic(t)) {
         return make_partition_errors(t, error_code::invalid_topic_exception);
     }
     return {};
@@ -117,18 +109,19 @@ static ss::future<result_t> prefix_truncate(
   model::ntp ntp,
   model::offset truncation_offset,
   std::chrono::milliseconds timeout_ms) {
-    auto partition = pm.get(ntp);
-    if (!partition) {
+    auto raw_partition = pm.get(ntp);
+    if (!raw_partition) {
         co_return make_partition_error(
           ntp, error_code::unknown_topic_or_partition);
     }
-    if (!partition->is_leader()) {
+    auto partition = replicated_partition(raw_partition);
+    if (!partition.is_leader()) {
         co_return make_partition_error(
           ntp, error_code::not_leader_for_partition);
     }
     if (truncation_offset == current_high_watermark) {
         /// User is requesting to truncate all data
-        truncation_offset = partition->high_watermark();
+        truncation_offset = partition.high_watermark();
     }
     if (truncation_offset < model::offset(0)) {
         co_return make_partition_error(ntp, error_code::offset_out_of_range);
@@ -138,7 +131,7 @@ static ss::future<result_t> prefix_truncate(
     /// written to the log, eventually consumed by replicas via the
     /// new_log_eviction_stm, which will perform a prefix truncation at the
     /// given offset
-    auto errc = co_await partition->prefix_truncate(
+    auto errc = co_await raw_partition->prefix_truncate(
       truncation_offset, ss::lowres_clock::now() + timeout_ms);
     if (errc) {
         vassert(
@@ -167,14 +160,11 @@ static ss::future<result_t> prefix_truncate(
           kerr);
         co_return make_partition_error(ntp, kerr);
     }
-    const auto kafka_start_offset
-      = partition->get_offset_translator_state()->from_log_offset(
-        partition->start_offset());
+    const auto kafka_start_offset = partition.start_offset();
     vlog(
       klog.info,
-      "Truncated partition: {} to log offset: {} kafka offset: {}",
+      "Truncated partition: {} to kafka offset: {}",
       ntp,
-      partition->start_offset(),
       kafka_start_offset);
     /// prefix_truncate() will return when the start_offset has been incremented
     /// to the desired new low watermark. No other guarantees about the system
