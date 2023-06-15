@@ -52,7 +52,7 @@ validate_at_topic_level(request_context& ctx, const delete_records_topic& t) {
         const auto cfg = ctx.metadata_cache().get_topic_cfg(
           model::topic_namespace_view(model::kafka_namespace, t.name));
         if (!cfg || !cfg->properties.cleanup_policy_bitflags) {
-            return false;
+            return true;
         }
         /// TODO: call is_collectable()? Maybe theres overrides
         const auto flags = cfg->properties.cleanup_policy_bitflags;
