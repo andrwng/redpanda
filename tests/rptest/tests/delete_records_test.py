@@ -686,7 +686,9 @@ class DeleteRecordsTest(RedpandaTest):
                                        topic=self.topic,
                                        partition_idx=0,
                                        n=expected_segments_remaining,
-                                       original_snapshot=snapshot)
+                                       original_snapshot=snapshot,
+                                       timeout_sec=60,
+                                       backoff_sec=1)
 
         # Assert the effect promoted the start offset correctly
         self.assert_new_partition_boundaries(low_watermark, high_watermark)
