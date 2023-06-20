@@ -34,9 +34,28 @@
 
 namespace cloud_storage {
 
+struct timequery_params {
+    explicit timequery_params(
+      model::timestamp ts, kafka::offset o = kafka::offset{})
+      : ts(ts)
+      , start_offset(o) {}
+
+    // Timestamp to search for.
+    model::timestamp ts{};
+
+    // Optional inclusive lower bound on the Kafka offset.
+    kafka::offset start_offset{};
+};
+
 /// Search query type
-using async_view_search_query_t
-  = std::variant<model::offset, kafka::offset, model::timestamp>;
+using async_view_search_query_t = std::variant<
+  // E.g. when looking for a specific segment boundary when computing
+  // size-based retention.
+  model::offset,
+  // E.g. when doing an offset-based Kafka fetch.
+  kafka::offset,
+  // E.g. during a timequery, or when computing time-based retention.
+  timequery_params>;
 
 std::ostream& operator<<(std::ostream&, const async_view_search_query_t&);
 

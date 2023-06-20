@@ -52,7 +52,10 @@ static ss::sstring to_string(const async_view_search_query_t& t) {
       t,
       [&](model::offset ro) { return ssx::sformat("[offset: {}]", ro); },
       [&](kafka::offset ko) { return ssx::sformat("[kafka offset: {}]", ko); },
-      [&](model::timestamp ts) { return ssx::sformat("[timestamp: {}]", ts); });
+      [&](timequery_params ts) {
+          return ssx::sformat(
+            "[timestamp: {}, kafka offset: {}]", ts.ts, ts.start_offset);
+      });
 }
 
 std::ostream& operator<<(std::ostream& s, const async_view_search_query_t& q) {
@@ -72,9 +75,9 @@ contains(const partition_manifest& m, const async_view_search_query_t& query) {
           return k >= m.get_start_kafka_offset()
                  && k < m.get_next_kafka_offset();
       },
-      [&](model::timestamp t) {
-          return m.size() > 0 && t >= m.begin()->base_timestamp
-                 && t <= m.last_segment()->max_timestamp;
+      [&](timequery_params t) {
+          return m.size() > 0 && t.ts >= m.begin()->base_timestamp
+                 && t.ts <= m.last_segment()->max_timestamp;
       });
 }
 
@@ -484,7 +487,7 @@ async_manifest_view::get_cursor(async_view_search_query_t query) noexcept {
         ss::gate::holder h(_gate);
         if (
           !in_archive(query) && !in_stm(query)
-          && !std::holds_alternative<model::timestamp>(query)) {
+          && !std::holds_alternative<timequery_params>(query)) {
             // The view should contain manifest below archive start in
             // order to be able to perform retention and advance metadata.
             vlog(
@@ -606,9 +609,9 @@ bool async_manifest_view::in_archive(async_view_search_query_t o) {
                  && ko < _stm_manifest.get_start_kafka_offset().value_or(
                       kafka::offset::min());
       },
-      [this](model::timestamp ts) {
+      [this](timequery_params t) {
           auto bt = _stm_manifest.begin()->base_timestamp;
-          return ts < bt;
+          return t.ts < bt;
       });
 }
 
@@ -625,13 +628,13 @@ bool async_manifest_view::in_stm(async_view_search_query_t o) {
             kafka::offset::max());
           return ko >= sko;
       },
-      [this](model::timestamp ts) {
-          auto sm = _stm_manifest.timequery(ts);
+      [this](timequery_params t) {
+          auto sm = _stm_manifest.timequery(t.ts);
           if (!sm.has_value()) {
               return false;
           }
-          return sm.value().base_timestamp <= ts
-                 && ts <= sm.value().max_timestamp;
+          return sm.value().base_timestamp <= t.ts
+                 && t.ts <= sm.value().max_timestamp;
       });
 }
 
@@ -756,7 +759,8 @@ async_manifest_view::time_based_retention(
         // later.
         const auto spill_search_query = std::min(
           boundary, earliest_ts_in_spill);
-        auto res = co_await get_cursor(spill_search_query);
+        timequery_params t{spill_search_query};
+        auto res = co_await get_cursor(t);
         if (res.has_failure() && res.error() != error_outcome::out_of_range) {
             vlog(
               _ctxlog.error,
@@ -948,7 +952,7 @@ async_manifest_view::get_materialized_manifest(
             co_return std::ref(_stm_manifest);
         }
         if (
-          !in_stm(q) && std::holds_alternative<model::timestamp>(q)
+          std::holds_alternative<timequery_params>(q)
           && _stm_manifest.get_archive_start_offset() == model::offset{}) {
             vlog(_ctxlog.debug, "Using STM manifest for timequery {}", q);
             co_return std::ref(_stm_manifest);
@@ -1033,6 +1037,43 @@ async_manifest_view::hydrate_manifest(
 std::optional<segment_meta> async_manifest_view::search_spillover_manifests(
   async_view_search_query_t query) const {
     const auto& manifests = _stm_manifest.get_spillover_map();
+    auto manifest_ix_for_kafka_offset = [&](kafka::offset k) {
+        // Returns the index of the first manifest that contains 'k', or -1 if
+        // no such segment exists.
+        vlog(
+          _ctxlog.debug,
+          "search_spillover_manifest query: {}, num manifests: {}, first: "
+          "{}, last: {}",
+          query,
+          manifests.size(),
+          manifests.empty() ? kafka::offset{}
+                            : manifests.begin()->base_kafka_offset(),
+          manifests.empty() ? kafka::offset{}
+                            : manifests.last_segment()->next_kafka_offset());
+        const auto& bo_col = manifests.get_base_offset_column();
+        const auto& co_col = manifests.get_committed_offset_column();
+        const auto& do_col = manifests.get_delta_offset_column();
+        const auto& de_col = manifests.get_delta_offset_end_column();
+        auto bo_it = bo_col.begin();
+        auto co_it = co_col.begin();
+        auto do_it = do_col.begin();
+        auto de_it = de_col.begin();
+        while (!bo_it.is_end()) {
+            static constexpr int64_t min_delta = model::offset::min()();
+            auto d_begin = *do_it == min_delta ? 0 : *do_it;
+            auto d_end = *de_it == min_delta ? d_begin : *de_it;
+            auto bko = kafka::offset(*bo_it - d_begin);
+            auto nko = kafka::offset(*co_it - d_end);
+            if (k >= bko && k <= nko) {
+                return static_cast<int>(bo_it.index());
+            }
+            ++bo_it;
+            ++co_it;
+            ++do_it;
+            ++de_it;
+        }
+        return -1;
+    };
     auto ix = ss::visit(
       query,
       [&](model::offset o) {
@@ -1073,31 +1114,9 @@ std::optional<segment_meta> async_manifest_view::search_spillover_manifests(
                               : manifests.begin()->base_kafka_offset(),
             manifests.empty() ? kafka::offset{}
                               : manifests.last_segment()->next_kafka_offset());
-          const auto& bo_col = manifests.get_base_offset_column();
-          const auto& co_col = manifests.get_committed_offset_column();
-          const auto& do_col = manifests.get_delta_offset_column();
-          const auto& de_col = manifests.get_delta_offset_end_column();
-          auto bo_it = bo_col.begin();
-          auto co_it = co_col.begin();
-          auto do_it = do_col.begin();
-          auto de_it = de_col.begin();
-          while (!bo_it.is_end()) {
-              static constexpr int64_t min_delta = model::offset::min()();
-              auto d_begin = *do_it == min_delta ? 0 : *do_it;
-              auto d_end = *de_it == min_delta ? d_begin : *de_it;
-              auto bko = kafka::offset(*bo_it - d_begin);
-              auto nko = kafka::offset(*co_it - d_end);
-              if (k >= bko && k <= nko) {
-                  return static_cast<int>(bo_it.index());
-              }
-              ++bo_it;
-              ++co_it;
-              ++do_it;
-              ++de_it;
-          }
-          return -1;
+          return manifest_ix_for_kafka_offset(k);
       },
-      [&](model::timestamp t) {
+      [&](timequery_params t) {
           vlog(
             _ctxlog.debug,
             "search_spillover_manifest query: {}, num manifests: {}, first: "
@@ -1108,15 +1127,31 @@ std::optional<segment_meta> async_manifest_view::search_spillover_manifests(
                               : manifests.begin()->base_timestamp,
             manifests.empty() ? model::timestamp{}
                               : manifests.last_segment()->max_timestamp);
+          if (t.start_offset >= manifests.last_segment()->next_kafka_offset()) {
+              return -1;
+          }
           const auto& bt_col = manifests.get_base_timestamp_column();
           const auto& mt_col = manifests.get_max_timestamp_column();
-          auto mt_it = mt_col.lower_bound(t.value());
+          auto mt_it = mt_col.lower_bound(t.ts.value());
           if (mt_it.is_end()) {
               return -1;
           }
+          // Check if our chosen-by-timestamp starting segment falls below the
+          // desired starting Kafka offset. If so, we must skip forward.
+          if (
+            t.start_offset != kafka::offset{}
+            && t.start_offset
+                 >= manifests.at_index(mt_it.index())->base_kafka_offset()) {
+              auto start_man_ix = manifest_ix_for_kafka_offset(t.start_offset);
+              if (
+                start_man_ix > 0
+                && static_cast<size_t>(start_man_ix) > mt_it.index()) {
+                  mt_it = mt_col.at_index(start_man_ix);
+              }
+          }
           auto bt_it = bt_col.at_index(mt_it.index());
           while (!bt_it.is_end()) {
-              if (t.value() >= *bt_it && t.value() <= *mt_it) {
+              if (t.ts.value() >= *bt_it && t.ts.value() <= *mt_it) {
                   return static_cast<int>(bt_it.index());
               }
               ++bt_it;

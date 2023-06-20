@@ -447,11 +447,13 @@ private:
 
     ss::future<> init_cursor(storage::log_reader_config config) {
         async_view_search_query_t query;
+        // NOTE: config.start_offset actually contains kafka offset stored
+        // using model::offset type.
         if (config.first_timestamp.has_value()) {
-            query = config.first_timestamp.value();
+            query = timequery_params(
+              config.first_timestamp.value(),
+              model::offset_cast(config.start_offset));
         } else {
-            // NOTE: config.start_offset actually contains kafka offset
-            // stored using model::offset type.
             query = model::offset_cast(config.start_offset);
         }
         // Find manifest that contains requested timestamp
@@ -980,7 +982,9 @@ remote_partition::timequery(storage::timequery_config cfg) {
         co_return std::nullopt;
     }
 
-    auto start_offset = stm_manifest.get_start_kafka_offset().value();
+    auto start_offset = std::max(
+      stm_manifest.get_start_kafka_offset().value(),
+      stm_manifest.get_start_kafka_offset_override());
 
     // Synthesize a log_reader_config from our timequery_config
     storage::log_reader_config config(
