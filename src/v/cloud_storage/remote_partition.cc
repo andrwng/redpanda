@@ -107,6 +107,11 @@ remote_partition::borrow_result_t remote_partition::borrow_next_reader(
             auto maybe_meta = manifest.timequery(*config.first_timestamp);
             if (maybe_meta) {
                 mit = manifest.segment_containing(maybe_meta->base_offset);
+                // If the timequery pointed us at a Kafka offset below the
+                // lowest desired, move it forward.
+                if (ko >= mit->next_kafka_offset()) {
+                    mit = manifest.segment_containing(ko);
+                }
             }
         } else {
             // In this case the lookup is perfomed by kafka offset.
