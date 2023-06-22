@@ -52,6 +52,25 @@ private:
     size_t _reclaimed{0};
 };
 
+/*
+ * Retention strategy for use with 'retention_calculator'.
+ * Segments are accumulated until a segment with a max offset higher than the
+ * truncation point is met.
+ */
+class offset_based_strategy final : public retention_strategy {
+public:
+    static constexpr auto strat_name = "offset_based_retention";
+
+    explicit offset_based_strategy(kafka::offset);
+
+    bool done(const cloud_storage::partition_manifest::segment_meta&) override;
+
+    ss::sstring name() const override;
+
+private:
+    kafka::offset _highest_offset_to_remove;
+};
+
 std::optional<retention_calculator> retention_calculator::factory(
   const cloud_storage::partition_manifest& manifest,
   const storage::ntp_config& ntp_config) {
@@ -70,7 +89,7 @@ std::optional<retention_calculator> retention_calculator::factory(
     }
 
     std::vector<std::unique_ptr<retention_strategy>> strats;
-    strats.reserve(2);
+    strats.reserve(3);
 
     if (ntp_config.retention_bytes()) {
         auto total_retention_bytes = ntp_config.retention_bytes();
@@ -94,6 +113,12 @@ std::optional<retention_calculator> retention_calculator::factory(
             strats.push_back(
               std::make_unique<time_based_strategy>(oldest_allowed_timestamp));
         }
+    }
+    if (manifest.get_start_kafka_offset_override() > kafka::offset(0)) {
+        auto highest_to_remove = manifest.get_start_kafka_offset_override()
+                                 - kafka::offset(1);
+        strats.emplace_back(
+          std::make_unique<offset_based_strategy>(highest_to_remove));
     }
 
     if (strats.empty()) {
@@ -169,5 +194,17 @@ bool time_based_strategy::done(
 };
 
 ss::sstring time_based_strategy::name() const { return strat_name; }
+
+offset_based_strategy::offset_based_strategy(kafka::offset highest_to_remove)
+  : _highest_offset_to_remove(highest_to_remove) {}
+
+bool offset_based_strategy::done(
+  const cloud_storage::partition_manifest::segment_meta& current_segment_meta) {
+    // If the last offset in the segment is above the truncation point, we
+    // can't remove it based on offset alone.
+    return current_segment_meta.last_kafka_offset() > _highest_offset_to_remove;
+};
+
+ss::sstring offset_based_strategy::name() const { return strat_name; }
 
 } // namespace archival
