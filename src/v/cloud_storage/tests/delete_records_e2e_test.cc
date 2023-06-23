@@ -49,6 +49,46 @@ void check_consume_out_of_range(
       });
 };
 
+size_t produce_cloud_segments(
+  kafka_produce_transport& producer,
+  cluster::partition& partition,
+  size_t num_segs,
+  size_t records_per_batch,
+  size_t batches_per_seg) {
+    auto* log = dynamic_cast<storage::disk_log_impl*>(
+      partition.log().get_impl());
+    auto archiver_ref = partition.archiver();
+    BOOST_REQUIRE(archiver_ref.has_value());
+    auto* archiver = &archiver_ref.value().get();
+
+    size_t total_records = 0;
+    while (partition.archival_meta_stm()->manifest().size() < num_segs) {
+        for (size_t i = 0; i < batches_per_seg; i++) {
+            std::vector<kv_t> records;
+            for (size_t j = 0; j < records_per_batch; j++) {
+                records.emplace_back(
+                  ssx::sformat("key{}", total_records),
+                  ssx::sformat("val{}", total_records));
+                total_records++;
+            }
+            producer
+              .produce_to_partition(
+                partition.ntp().tp.topic,
+                partition.ntp().tp.partition,
+                std::move(records))
+              .get();
+        }
+        log->flush().get();
+        log->force_roll(ss::default_priority_class()).get();
+        archiver->upload_next_candidates().get();
+    }
+    // Upload and flush the manifest to unpin the max collectable offset.
+    auto manifest_res = archiver->upload_manifest("test").get();
+    BOOST_REQUIRE_EQUAL(manifest_res, cloud_storage::upload_result::success);
+    archiver->flush_manifest_clean_offset().get();
+    return total_records;
+}
+
 } // namespace
 
 class delete_records_e2e_fixture
@@ -89,45 +129,26 @@ public:
           = model::cleanup_policy_bitflags::deletion;
         add_topic({model::kafka_namespace, topic_name}, 1, props).get();
         wait_for_leader(ntp).get();
+        partition = app.partition_manager.local().get(ntp).get();
+        log = dynamic_cast<storage::disk_log_impl*>(
+          partition->log().get_impl());
+        auto archiver_ref = partition->archiver();
+        BOOST_REQUIRE(archiver_ref.has_value());
+        archiver = &archiver_ref.value().get();
     }
 
     model::topic topic_name;
     model::ntp ntp;
+    cluster::partition* partition;
+    storage::disk_log_impl* log;
+    archival::ntp_archiver* archiver;
 };
 
 FIXTURE_TEST(test_delete_from_stm, delete_records_e2e_fixture) {
-    auto partition = app.partition_manager.local().get(ntp);
-    auto* log = dynamic_cast<storage::disk_log_impl*>(
-      partition->log().get_impl());
-    auto archiver_ref = partition->archiver();
-    BOOST_REQUIRE(archiver_ref.has_value());
-    auto& archiver = archiver_ref.value().get();
-
     kafka_produce_transport producer(make_kafka_client().get());
     producer.start().get();
-    std::vector<kv_t> records{
-      {"key0", "val0"},
-      {"key1", "val1"},
-      {"key2", "val2"},
-    };
-    for (const auto& r : records) {
-        producer.produce_to_partition(topic_name, model::partition_id(0), {r})
-          .get();
-    }
-    log->flush().get();
-    log->force_roll(ss::default_priority_class()).get();
+    produce_cloud_segments(producer, *partition, 1, 1, 3);
     BOOST_REQUIRE_EQUAL(2, log->segments().size());
-
-    // Upload the closed segment to object storage.
-    tests::cooperative_spin_wait_with_timeout(3s, [&archiver] {
-        return archiver.upload_next_candidates().then(
-          [&](archival::ntp_archiver::batch_result) {
-              return archiver.manifest().size() >= 1;
-          });
-    }).get();
-    auto manifest_res = archiver.upload_manifest("test").get();
-    BOOST_REQUIRE_EQUAL(manifest_res, cloud_storage::upload_result::success);
-    archiver.flush_manifest_clean_offset().get();
 
     kafka_delete_records_transport deleter(make_kafka_client().get());
     deleter.start().get();
@@ -136,7 +157,7 @@ FIXTURE_TEST(test_delete_from_stm, delete_records_e2e_fixture) {
                    topic_name, model::partition_id(0), model::offset(1), 5s)
                  .get();
     BOOST_CHECK_EQUAL(model::offset(1), lwm);
-    tests::cooperative_spin_wait_with_timeout(3s, [&log] {
+    tests::cooperative_spin_wait_with_timeout(3s, [this] {
         return log->segment_count() == 1;
     }).get();
 
@@ -158,38 +179,14 @@ FIXTURE_TEST(test_delete_from_stm, delete_records_e2e_fixture) {
 }
 
 FIXTURE_TEST(test_delete_from_archive, delete_records_e2e_fixture) {
-    auto partition = app.partition_manager.local().get(ntp);
-    auto* log = dynamic_cast<storage::disk_log_impl*>(
-      partition->log().get_impl());
-    auto archiver_ref = partition->archiver();
-    BOOST_REQUIRE(archiver_ref.has_value());
-    auto& archiver = archiver_ref.value().get();
-
     kafka_produce_transport producer(make_kafka_client().get());
     producer.start().get();
-
-    size_t total_records = 0;
     const auto records_per_seg = 5;
     const auto num_segs = 40;
-    while (partition->archival_meta_stm()->manifest().size() < num_segs) {
-        for (size_t i = 0; i < records_per_seg; i++) {
-            std::vector<kv_t> records;
-            records.emplace_back(
-              ssx::sformat("key{}", total_records),
-              ssx::sformat("val{}", total_records));
-            producer
-              .produce_to_partition(topic_name, model::partition_id(0), records)
-              .get();
-            total_records++;
-        }
-        log->flush().get();
-        log->force_roll(ss::default_priority_class()).get();
-        archiver.upload_next_candidates().get();
-    }
-    // 30 segments at 10 segments per spillover manifest gets 2 spillover
-    // manifests and 10 segments in the stm manifest.
-    archiver.apply_spillover().get();
-    auto& stm_manifest = archiver.manifest();
+    auto total_records = produce_cloud_segments(
+      producer, *partition, num_segs, 1, records_per_seg);
+    archiver->apply_spillover().get();
+    auto& stm_manifest = archiver->manifest();
     BOOST_REQUIRE_EQUAL(
       stm_manifest.get_archive_start_offset(), model::offset(0));
     BOOST_REQUIRE_GT(
@@ -220,7 +217,47 @@ FIXTURE_TEST(test_delete_from_archive, delete_records_e2e_fixture) {
         auto key = consumed_records[0].first;
         BOOST_REQUIRE_EQUAL(key, ssx::sformat("key{}", i));
     }
-    // TODO(awong): make a more strict check for offset-based retention.
-    archiver.apply_archive_retention().get();
-    BOOST_REQUIRE_GT(stm_manifest.get_archive_start_offset(), model::offset(0));
+    archiver->housekeeping().get();
+    BOOST_REQUIRE_GT(stm_manifest.get_archive_start_offset(), model::offset{});
+}
+
+// Delete lands in local storage.
+// Delete lands in the STM manifest, truncated in STM manifest.
+// Delete lands in the STM manifest, truncated in spillover manifest.
+// Delete lands in the spillover manifest, truncated in spillover manifest.
+FIXTURE_TEST(test_delete_from_local_storage, delete_records_e2e_fixture) {
+    kafka_produce_transport producer(make_kafka_client().get());
+    producer.start().get();
+    const auto records_per_seg = 5;
+    const auto num_segs = 40;
+    auto cloud_records = produce_cloud_segments(
+      producer, *partition, num_segs, 1, records_per_seg);
+    archiver->apply_spillover().get();
+    auto& stm_manifest = archiver->manifest();
+    BOOST_REQUIRE_EQUAL(
+      stm_manifest.get_archive_start_offset(), model::offset(0));
+    BOOST_REQUIRE_GT(
+      stm_manifest.get_start_offset(), stm_manifest.get_archive_start_offset());
+    BOOST_REQUIRE_EQUAL(stm_manifest.get_spillover_map().size(), 3);
+    BOOST_REQUIRE_EQUAL(stm_manifest.size(), segs_per_spill);
+
+    size_t total_records = cloud_records;
+    for (auto i = 0; i < records_per_seg; i++) {
+        std::vector<kv_t> records;
+        records.emplace_back(
+          ssx::sformat("key{}", total_records),
+          ssx::sformat("val{}", total_records));
+        total_records++;
+        producer
+          .produce_to_partition(
+            partition->ntp().tp.topic,
+            partition->ntp().tp.partition,
+            std::move(records))
+          .get();
+    }
+    log->flush().get();
+    log->force_roll(ss::default_priority_class()).get();
+
+
+    partition->raft_start_offset();
 }
