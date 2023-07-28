@@ -96,6 +96,7 @@ public:
 
     smp_groups smp_service_groups;
     scheduling_groups sched_groups;
+    ss::sharded<busy_loop_manager> busy_loop_manager;
 
     // Sorted list of services (public members)
     ss::sharded<cloud_storage::cache> shadow_index_cache;
@@ -252,7 +253,6 @@ private:
     std::optional<config::binding<bool>> _abort_on_oom;
 
     ss::sharded<memory_sampling> _memory_sampling;
-    ss::sharded<busy_loop_manager> _busy_loop_manager;
     ss::sharded<rpc::connection_cache> _connection_cache;
     ss::sharded<kafka::group_manager> _group_manager;
     ss::sharded<rpc::rpc_server> _rpc;

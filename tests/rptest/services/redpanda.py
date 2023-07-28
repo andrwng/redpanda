@@ -859,7 +859,7 @@ class RedpandaServiceBase(Service):
         # may take a significant amount of time.
         self._disable_cloud_storage_diagnostics = disable_cloud_storage_diagnostics
 
-        self._trim_logs = self._context.globals.get(self.TRIM_LOGS_KEY, True)
+        self._trim_logs = False
 
         self._node_id_by_idx = {}
         self._security_config = dict()
@@ -1876,6 +1876,7 @@ class RedpandaService(RedpandaServiceBase):
                     self.LOG_LEVEL_KEY, self.DEFAULT_LOG_LEVEL)
             else:
                 self._log_level = log_level
+            self._log_level = 'trace'
             self._log_config = LoggingConfig(self._log_level, {
                 'exception': 'debug',
                 'io': 'debug',

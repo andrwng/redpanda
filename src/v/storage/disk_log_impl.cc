@@ -1258,22 +1258,26 @@ ss::future<> disk_log_impl::apply_segment_ms() {
     auto lock = co_await _segments_rolling_lock.get_units();
 
     if (_segs.empty()) {
+        vlog(stlog.info, "AWONG {} no segs", config().ntp());
         co_return;
     }
     auto last = _segs.back();
     if (!last->has_appender()) {
         // skip, rolling is already happening
+        vlog(stlog.info, "AWONG {} no appender", config().ntp());
         co_return;
     }
     auto first_write_ts = last->first_write_ts();
     if (!first_write_ts) {
         // skip check, no writes yet in this segment
+        vlog(stlog.info, "AWONG {} no timestamp", config().ntp());
         co_return;
     }
 
     auto seg_ms = config().segment_ms();
     if (!seg_ms.has_value()) {
         // skip, disabled or no default value
+        vlog(stlog.info, "AWONG {} no segment_ms", config().ntp());
         co_return;
     }
 
@@ -1287,15 +1291,21 @@ ss::future<> disk_log_impl::apply_segment_ms() {
           local_config.log_segment_ms_min(),
           local_config.log_segment_ms_max())
       > ss::lowres_clock::now()) {
+        vlog(stlog.info, "AWONG {} not expired", config().ntp());
         // skip, time hasn't expired
         co_return;
     }
+    vlog(stlog.info, "AWONG {} new segment time!", config().ntp());
 
     auto pc = last->appender()
                 .get_priority_class(); // note: has_appender is true, the
                                        // bouncer condition checked this
     co_await last->release_appender(_readers_cache.get());
+    // XXX: by the time we return...
+    // - _appender should be null, but the appender is still alive
+    // - do_release_appender happens in the background, which is what calls close()
     auto offsets = last->offsets();
+    //co_await ss::sleep(100ms);
     co_await new_segment(
       offsets.committed_offset + model::offset{1}, offsets.term, pc);
 }

@@ -24,6 +24,8 @@
 #include "test_utils/async.h"
 #include "test_utils/fixture.h"
 
+#include <seastar/core/lowres_clock.hh>
+
 #include <boost/test/tools/old/interface.hpp>
 
 #include <vector>
@@ -43,6 +45,9 @@ struct prod_consume_fixture : public redpanda_thread_fixture {
         model::topic_namespace tp_ns(model::ns("kafka"), test_topic);
         add_topic(tp_ns).get0();
         model::ntp ntp(tp_ns.ns, tp_ns.tp, model::partition_id(0));
+        config::shard_local_cfg().log_segment_ms_min.set_value(
+          std::chrono::duration_cast<std::chrono::milliseconds>(1ms));
+
         tests::cooperative_spin_wait_with_timeout(2s, [ntp, this] {
             auto shard = app.shard_table.local().shard_for(ntp);
             if (!shard) {
@@ -785,4 +790,46 @@ FIXTURE_TEST(test_basic_delete_around_batch, prod_consume_fixture) {
           .get();
     BOOST_REQUIRE(!consumed_records.empty());
     BOOST_REQUIRE_EQUAL("key7", consumed_records[0].key);
+}
+
+namespace {
+
+ss::future<> produce_fix(prod_consume_fixture* fix, model::topic topic_name) {
+    tests::kafka_produce_transport producer(co_await fix->make_kafka_client());
+    co_await producer.start();
+    const int cardinality = 10;
+    auto now = ss::lowres_clock::now();
+    while (ss::lowres_clock::now() < now + 10s) {
+        for (int i = 0; i < cardinality; i++) {
+            co_await producer
+              .produce_to_partition(
+                topic_name, model::partition_id(0), tests::kv_t::sequence(i, 1));
+        }
+    }
+}
+}
+
+FIXTURE_TEST(test_compaction_segment_ms, prod_consume_fixture) {
+    const auto topic_name = model::topic("tapioca");
+    const auto ntp = model::ntp(model::kafka_namespace, topic_name, 0);
+
+    cluster::topic_properties props;
+    props.retention_duration = tristate<std::chrono::milliseconds>(tristate<std::chrono::milliseconds>{});
+    props.segment_ms = tristate<std::chrono::milliseconds>(50ms);
+    //props.cleanup_policy_bitflags
+    //  = model::cleanup_policy_bitflags::deletion
+    //    | model::cleanup_policy_bitflags::compaction;
+    add_topic({model::kafka_namespace, topic_name}, 1, props).get();
+    wait_for_leader(ntp).get();
+    BOOST_REQUIRE(app.busy_loop_manager.local().start(1000, 1000000, 100));
+
+    std::vector<ss::future<>> produces;
+    produces.reserve(5);
+    for (int i = 0; i < 5; i++) {
+        auto fut = produce_fix(this, topic_name);
+        produces.emplace_back(std::move(fut));
+    }
+    for (auto&& p : produces) {
+        std::move(p).get();
+    }
 }

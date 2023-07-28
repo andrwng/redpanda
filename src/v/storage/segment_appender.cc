@@ -26,6 +26,7 @@
 
 #include <fmt/format.h>
 
+#include <chrono>
 #include <ostream>
 
 namespace storage {
@@ -126,7 +127,8 @@ ss::future<> segment_appender::append(bytes_view s) {
 }
 
 ss::future<> segment_appender::append(const iobuf& io) {
-    return ss::do_for_each(
+using namespace std::chrono_literals;
+    co_return co_await ss::do_for_each(
       io.begin(), io.end(), [this](const iobuf::fragment& f) {
           return append(f.get(), f.size());
       });
@@ -320,10 +322,12 @@ ss::future<> segment_appender::truncate(size_t n) {
 
 ss::future<> segment_appender::close() {
     vassert(!_closed, "close() on closed segment: {}", *this);
+using namespace std::chrono_literals;
+    //co_await ss::sleep(500ms);
     _closed = true;
-    return hard_flush()
-      .then([this] { return do_truncation(_committed_offset); })
-      .then([this] { return _out.close(); });
+    co_await hard_flush();
+    co_await do_truncation(_committed_offset);
+    co_await _out.close();
 }
 
 ss::future<> segment_appender::do_next_adaptive_fallocation() {
@@ -371,8 +375,15 @@ ss::future<> segment_appender::do_next_adaptive_fallocation() {
       });
 }
 
+ss::future<size_t> segment_appender::out_write(uint64_t pos, const char* src, size_t len, ss::io_priority_class pc) {
+using namespace std::chrono_literals;
+//    co_await ss::sleep(60ms);
+    co_return co_await _out.dma_write(pos, src, len, pc);
+}
+
 ss::future<> segment_appender::maybe_advance_stable_offset(
   const ss::lw_shared_ptr<inflight_write>& write) {
+using namespace std::chrono_literals;
     /*
      * ack the largest committed offset such that all smaller
      * offsets have been written to disk.
@@ -401,10 +412,9 @@ ss::future<> segment_appender::maybe_advance_stable_offset(
             _callbacks->committed_physical_offset(committed);
         }
         _stable_offset = committed;
-        return process_flush_ops(committed);
+        co_return co_await process_flush_ops(committed);
     } else {
         write->done = true;
-        return ss::now();
     }
 }
 
@@ -493,8 +503,7 @@ void segment_appender::dispatch_background_head_write() {
           return units
             .then([this, h, w, start_offset, expected, src, full](
                     ssx::semaphore_units u) mutable {
-                return _out
-                  .dma_write(start_offset, src, expected, _opts.priority)
+                return out_write(start_offset, src, expected, _opts.priority)
                   .then([this, h, w, expected, full](size_t got) {
                       /*
                        * the continuation that captured full=true is the end of

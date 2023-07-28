@@ -111,12 +111,17 @@ public:
           use_node_id,
           empty_seed_starts_cluster_val,
           kafka_admin_topic_api_rate);
+        config::shard_local_cfg().log_segment_ms_min.set_value(
+          std::chrono::duration_cast<std::chrono::milliseconds>(1ms));
+        config::shard_local_cfg().log_compaction_interval_ms.set_value(
+          std::chrono::duration_cast<std::chrono::milliseconds>(1000ms));
         app.initialize(
           proxy_config(proxy_port),
           proxy_client_config(kafka_port),
           schema_reg_config(schema_reg_port),
           proxy_client_config(kafka_port),
           sch_groups);
+
         app.check_environment();
         app.wire_up_and_start(*app_signal, true);
 

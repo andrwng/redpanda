@@ -5,6 +5,7 @@ from ducktape.utils.util import wait_until
 
 from rptest.clients.rpk import RpkTool
 from rptest.clients.types import TopicSpec
+from rptest.services.admin import Admin
 from rptest.services.cluster import cluster
 from rptest.services.kafka_cli_consumer import KafkaCliConsumer
 
@@ -38,7 +39,10 @@ class SegmentMsTest(RedpandaTest):
     def __init__(self, test_context):
         super().__init__(test_context=test_context,
                          num_brokers=1,
-                         extra_rp_conf={"enable_leader_balancer": False})
+                         extra_rp_conf={
+                             "enable_leader_balancer": False,
+            "readers_cache_eviction_timeout_ms": 100,
+                             })
 
     def _total_segments_count(self, topic_spec: TopicSpec, partition=0):
         return next(segments_count(self.redpanda, topic_spec.name, partition))
@@ -59,7 +63,7 @@ class SegmentMsTest(RedpandaTest):
                                          | extra_cluster_cfg,
                                          expect_restart=False)
 
-        topic = TopicSpec()
+        topic = TopicSpec(cleanup_policy="compact,delete")
         rpk = RpkTool(self.redpanda)
         rpk.create_topic(topic.name,
                          partitions=1,
@@ -80,6 +84,7 @@ class SegmentMsTest(RedpandaTest):
                                       redpanda=self.redpanda,
                                       topic=topic.name,
                                       max_messages=num_messages,
+                                      repeating_keys=10,
                                       throughput=1)
         consumer = VerifiableConsumer(context=self.test_context,
                                       num_nodes=1,
@@ -275,13 +280,14 @@ class SegmentMsTest(RedpandaTest):
     def test_segment_rolling_with_retention_consumer(self):
         self.redpanda.set_cluster_config({
             "log_segment_ms": None,
-            "log_segment_ms_min": 10000
+            "log_segment_ms_min": 10000,
         })
         topic = TopicSpec(segment_bytes=(1024 * 1024),
                           replication_factor=1,
                           partition_count=1)
 
         self.client().create_topic(topic)
+        admin = Admin(self.redpanda)
 
         producer = VerifiableProducer(context=self.test_context,
                                       num_nodes=1,
@@ -290,6 +296,7 @@ class SegmentMsTest(RedpandaTest):
                                       throughput=10000)
 
         producer.start()
+        admin.busy_loop_start(self.redpanda.nodes[0], min_spins_per_scheduling_point=10000, max_spins_per_scheduling_point=20000000, num_fibers=5)
         wait_until(
             lambda: self._total_segments_count(topic) >= 5,
             timeout_sec=120,
@@ -360,3 +367,4 @@ class SegmentMsTest(RedpandaTest):
                    timeout_sec=120,
                    err_msg=f"Failed to consume all messages from {topic.name}")
         consumer_2.stop()
+        admin.busy_loop_stop(self.redpanda.nodes[0])

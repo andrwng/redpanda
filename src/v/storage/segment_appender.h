@@ -177,6 +177,8 @@ private:
         }
     };
 
+    ss::future<size_t> out_write(uint64_t pos, const char* src, size_t len, ss::io_priority_class pc);
+
     ss::chunked_fifo<ss::lw_shared_ptr<inflight_write>> _inflight;
     callbacks* _callbacks = nullptr;
     ss::future<>

@@ -955,8 +955,8 @@ class Admin:
                              node=node,
                              **kwargs)
 
-    def busy_loop_stop(self, node, spins_per_scheduling_point, num_fibers):
-        return self._request("PUT", "debug/busy_loop_stop", node=node).json()
+    def busy_loop_stop(self, node):
+        return self._request("PUT", "debug/busy_loop_stop", node=node)
 
     def cloud_storage_usage(self) -> int:
         return int(
