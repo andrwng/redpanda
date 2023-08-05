@@ -3,6 +3,9 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 add_compile_options(-Wall)
 
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+add_subdirectory(googletest)
+
 #
 # When enabled clang-tidy will be invoked along side the compiler, and
 # clang-tidy warnings will be reported as errors.
