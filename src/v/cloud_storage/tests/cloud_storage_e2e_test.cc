@@ -8,6 +8,7 @@
  * https://github.com/redpanda-data/redpanda/blob/master/licenses/rcl.md
  */
 
+#include "test_utils/test.h"
 #include "archival/ntp_archiver_service.h"
 #include "cloud_storage/remote.h"
 #include "cloud_storage/spillover_manifest.h"
@@ -20,8 +21,6 @@
 
 #include <seastar/core/io_priority_class.hh>
 
-#include <boost/algorithm/string/predicate.hpp>
-
 #include <iterator>
 
 using tests::kafka_consume_transport;
@@ -33,7 +32,8 @@ static ss::logger e2e_test_log("e2e_test");
 class e2e_fixture
   : public s3_imposter_fixture
   , public redpanda_thread_fixture
-  , public enable_cloud_storage_fixture {
+  , public enable_cloud_storage_fixture
+  , public ::testing::Test {
 public:
     e2e_fixture()
       : redpanda_thread_fixture(
@@ -45,7 +45,7 @@ public:
     }
 };
 
-FIXTURE_TEST(test_produce_consume_from_cloud, e2e_fixture) {
+TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
     config::shard_local_cfg()
       .cloud_storage_disable_upload_loop_for_tests.set_value(true);
     const model::topic topic_name("tapioca");
@@ -61,12 +61,12 @@ FIXTURE_TEST(test_produce_consume_from_cloud, e2e_fixture) {
     auto partition = app.partition_manager.local().get(ntp);
     auto log = partition->log();
     auto& archiver = partition->archiver().value().get();
-    BOOST_REQUIRE(archiver.sync_for_tests().get());
+    ASSERT_TRUE(archiver.sync_for_tests().get());
 
     tests::remote_segment_generator gen(make_kafka_client().get(), *partition);
-    BOOST_REQUIRE_EQUAL(3, gen.records_per_batch(3).produce().get());
-    BOOST_REQUIRE_EQUAL(2, log->segments().size());
-    BOOST_REQUIRE_EQUAL(1, archiver.manifest().size());
+    ASSERT_EQ(3, gen.records_per_batch(3).produce().get());
+    ASSERT_EQ(2, log->segments().size());
+    ASSERT_EQ(1, archiver.manifest().size());
 
     // Compact the local log to GC to the collectible offset.
     ss::abort_source as;
@@ -94,14 +94,14 @@ FIXTURE_TEST(test_produce_consume_from_cloud, e2e_fixture) {
                                 model::offset(0))
                               .get();
     auto records = kv_t::sequence(0, 3);
-    BOOST_CHECK_EQUAL(records.size(), consumed_records.size());
+    EXPECT_EQ(records.size(), consumed_records.size());
     for (int i = 0; i < records.size(); ++i) {
-        BOOST_CHECK_EQUAL(records[i].key, consumed_records[i].key);
-        BOOST_CHECK_EQUAL(records[i].val, consumed_records[i].val);
+        EXPECT_EQ(records[i].key, consumed_records[i].key);
+        EXPECT_EQ(records[i].val, consumed_records[i].val);
     }
 }
 
-FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
+TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
 #ifndef _NDEBUG
     config::shard_local_cfg()
       .cloud_storage_disable_upload_loop_for_tests.set_value(true);
@@ -117,7 +117,7 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
     const model::topic topic_name("tapioca");
     model::ntp ntp(model::kafka_namespace, topic_name, 0);
     cluster::topic_properties props;
-    BOOST_REQUIRE(props.is_compacted() == false);
+    ASSERT_TRUE(props.is_compacted() == false);
     props.shadow_indexing = model::shadow_indexing_mode::full;
     props.retention_local_target_bytes = tristate<size_t>(1);
     add_topic({model::kafka_namespace, topic_name}, 1, props).get();
@@ -128,7 +128,7 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
     auto partition = app.partition_manager.local().get(ntp);
     auto log = partition->log();
     auto archiver_ref = partition->archiver();
-    BOOST_REQUIRE(archiver_ref.has_value());
+    ASSERT_TRUE(archiver_ref.has_value());
     auto& archiver = archiver_ref.value().get();
 
     kafka_produce_transport producer(make_kafka_client().get());
@@ -156,10 +156,10 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
         log->flush().get();
         log->force_roll(ss::default_priority_class()).get();
 
-        BOOST_REQUIRE(archiver.sync_for_tests().get());
+        ASSERT_TRUE(archiver.sync_for_tests().get());
         archiver.upload_next_candidates().get();
     }
-    BOOST_REQUIRE_EQUAL(
+    ASSERT_EQ(
       cloud_storage::upload_result::success,
       archiver.upload_manifest("test").get());
     archiver.flush_manifest_clean_offset().get();
@@ -178,7 +178,7 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
 
     // This should upload several spillover manifests and apply changes to the
     // archival metadata STM.
-    BOOST_REQUIRE(archiver.sync_for_tests().get());
+    ASSERT_TRUE(archiver.sync_for_tests().get());
     archiver.apply_spillover().get();
 
     const auto& local_manifest = partition->archival_meta_stm()->manifest();
@@ -216,7 +216,7 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
             // Skip topic manifests manifest
             continue;
         }
-        BOOST_REQUIRE_EQUAL(req.method, "PUT");
+        ASSERT_EQ(req.method, "PUT");
         cloud_storage::partition_manifest spm(
           partition->get_ntp_config().ntp(),
           partition->get_ntp_config().get_initial_revision());
@@ -239,20 +239,20 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
         spillover_manifests.insert(std::make_pair(spm_so, std::move(spm)));
     }
 
-    BOOST_REQUIRE(spillover_manifests.size() != 0);
+    ASSERT_TRUE(spillover_manifests.size() != 0);
     const auto& last = spillover_manifests.rbegin()->second;
     const auto& first = spillover_manifests.begin()->second;
 
-    BOOST_REQUIRE(model::next_offset(last.get_last_offset()) == so);
-    BOOST_REQUIRE(first.get_start_offset().has_value());
-    BOOST_REQUIRE(first.get_start_offset().value() == archive_so);
-    BOOST_REQUIRE(first.get_start_kafka_offset().has_value());
-    BOOST_REQUIRE(first.get_start_kafka_offset().value() == archive_ko);
+    ASSERT_TRUE(model::next_offset(last.get_last_offset()) == so);
+    ASSERT_TRUE(first.get_start_offset().has_value());
+    ASSERT_TRUE(first.get_start_offset().value() == archive_so);
+    ASSERT_TRUE(first.get_start_kafka_offset().has_value());
+    ASSERT_TRUE(first.get_start_kafka_offset().value() == archive_ko);
 
     model::offset expected_so = archive_so;
     for (const auto& [key, m] : spillover_manifests) {
         std::ignore = key;
-        BOOST_REQUIRE(m.get_start_offset().value() == expected_so);
+        ASSERT_TRUE(m.get_start_offset().value() == expected_so);
         expected_so = model::next_offset(m.get_last_offset());
     }
 
@@ -274,13 +274,13 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
         next_offset += model::offset((int64_t)tmp.size());
     }
 
-    BOOST_REQUIRE_EQUAL(total_records, consumed_records.size());
+    ASSERT_EQ(total_records, consumed_records.size());
     int i = 0;
     for (const auto& rec : consumed_records) {
         auto expected_key = ssx::sformat("key{}", i);
         auto expected_val = ssx::sformat("val{}", i);
-        BOOST_REQUIRE_EQUAL(rec.key, expected_key);
-        BOOST_REQUIRE_EQUAL(rec.val, expected_val);
+        ASSERT_EQ(rec.key, expected_key);
+        ASSERT_EQ(rec.val, expected_val);
         i++;
     }
 
@@ -320,13 +320,13 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
           last_offset);
     }
 
-    BOOST_REQUIRE_EQUAL(total_records - new_so, consumed_records.size());
+    ASSERT_EQ(total_records - new_so, consumed_records.size());
     i = new_so;
     for (const auto& rec : consumed_records) {
         auto expected_key = ssx::sformat("key{}", i);
         auto expected_val = ssx::sformat("val{}", i);
-        BOOST_REQUIRE_EQUAL(rec.key, expected_key);
-        BOOST_REQUIRE_EQUAL(rec.val, expected_val);
+        ASSERT_EQ(rec.key, expected_key);
+        ASSERT_EQ(rec.val, expected_val);
         i++;
     }
 #endif
@@ -335,7 +335,8 @@ FIXTURE_TEST(test_produce_consume_from_cloud_with_spillover, e2e_fixture) {
 class cloud_storage_manual_e2e_test
   : public s3_imposter_fixture
   , public redpanda_thread_fixture
-  , public enable_cloud_storage_fixture {
+  , public enable_cloud_storage_fixture
+  , public ::testing::Test {
 public:
     static constexpr auto segs_per_spill = 10;
     cloud_storage_manual_e2e_test()
@@ -419,7 +420,7 @@ ss::future<bool> check_consume_from_beginning(
 
 } // namespace
 
-FIXTURE_TEST(test_consume_during_spillover, cloud_storage_manual_e2e_test) {
+TEST_F_ASYNC(cloud_storage_manual_e2e_test, test_consume_during_spillover) {
     config::shard_local_cfg().fetch_max_bytes.set_value(size_t{10});
     const auto records_per_seg = 5;
     const auto num_segs = 40;
@@ -453,14 +454,14 @@ FIXTURE_TEST(test_consume_during_spillover, cloud_storage_manual_e2e_test) {
     });
 
     auto start_before_spill = archiver->manifest().get_start_offset();
-    BOOST_REQUIRE(archiver->sync_for_tests().get());
+    ASSERT_TRUE(archiver->sync_for_tests().get());
     archiver->apply_spillover().get();
-    BOOST_REQUIRE_NE(
+    ASSERT_NE(
       start_before_spill, archiver->manifest().get_start_offset());
 
     g.close().get();
     for (auto& check : checks) {
-        BOOST_CHECK(check.get());
+        EXPECT_TRUE(check.get());
     }
     cleanup.cancel();
 }
