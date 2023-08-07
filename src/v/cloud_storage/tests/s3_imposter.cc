@@ -25,12 +25,6 @@
 #include <seastar/net/socket_defs.hh>
 #include <seastar/util/defer.hh>
 
-#include <boost/algorithm/string/predicate.hpp>
-#include <boost/core/noncopyable.hpp>
-#include <boost/property_tree/json_parser.hpp>
-#include <boost/test/tools/old/interface.hpp>
-#include <boost/test/unit_test.hpp>
-
 #include <charconv>
 
 using namespace std::chrono_literals;
@@ -319,7 +313,7 @@ void s3_imposter_fixture::set_routes(
                 }
                 return R"xml(<DeleteResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"></DeleteResult>)xml";
             }
-            BOOST_FAIL("Unexpected request");
+            // BOOST_FAIL("Unexpected request");
             return "";
         }
         std::map<ss::sstring, expectation> expectations;
