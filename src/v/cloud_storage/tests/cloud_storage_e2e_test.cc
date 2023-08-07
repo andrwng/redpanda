@@ -32,8 +32,7 @@ static ss::logger e2e_test_log("e2e_test");
 class e2e_fixture
   : public s3_imposter_fixture
   , public redpanda_thread_fixture
-  , public enable_cloud_storage_fixture
-  , public ::testing::Test {
+  , public enable_cloud_storage_fixture {
 public:
     e2e_fixture()
       : redpanda_thread_fixture(
@@ -45,7 +44,16 @@ public:
     }
 };
 
-TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
+class e2e_fixture_test : public ::testing::Test {
+public:
+  void SetUp() override {
+      fixture.reset(new e2e_fixture);
+  }
+protected:
+  std::unique_ptr<e2e_fixture> fixture;
+};
+
+TEST_F_ASYNC(e2e_fixture_test, test_produce_consume_from_cloud) {
     config::shard_local_cfg()
       .cloud_storage_disable_upload_loop_for_tests.set_value(true);
     const model::topic topic_name("tapioca");
@@ -53,17 +61,17 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
     cluster::topic_properties props;
     props.shadow_indexing = model::shadow_indexing_mode::full;
     props.retention_local_target_bytes = tristate<size_t>(1);
-    add_topic({model::kafka_namespace, topic_name}, 1, props).get();
-    wait_for_leader(ntp).get();
+    fixture->add_topic({model::kafka_namespace, topic_name}, 1, props).get();
+    fixture->wait_for_leader(ntp).get();
 
     // Do some sanity checks that our partition looks the way we expect (has a
     // log, archiver, etc).
-    auto partition = app.partition_manager.local().get(ntp);
+    auto partition = fixture->app.partition_manager.local().get(ntp);
     auto log = partition->log();
     auto& archiver = partition->archiver().value().get();
     ASSERT_TRUE(archiver.sync_for_tests().get());
 
-    tests::remote_segment_generator gen(make_kafka_client().get(), *partition);
+    tests::remote_segment_generator gen(fixture->make_kafka_client().get(), *partition);
     ASSERT_EQ(3, gen.records_per_batch(3).produce().get());
     ASSERT_EQ(2, log->segments().size());
     ASSERT_EQ(1, archiver.manifest().size());
@@ -85,7 +93,7 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
 
     // Attempt to consume from the beginning of the log. Since our local log
     // has been truncated, this exercises reading from cloud storage.
-    kafka_consume_transport consumer(make_kafka_client().get());
+    kafka_consume_transport consumer(fixture->make_kafka_client().get());
     consumer.start().get();
     auto consumed_records = consumer
                               .consume_from_partition(
@@ -101,7 +109,7 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
     }
 }
 
-TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
+TEST_F_ASYNC(e2e_fixture_test, test_produce_consume_from_cloud_with_spillover) {
 #ifndef _NDEBUG
     config::shard_local_cfg()
       .cloud_storage_disable_upload_loop_for_tests.set_value(true);
@@ -120,18 +128,18 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
     ASSERT_TRUE(props.is_compacted() == false);
     props.shadow_indexing = model::shadow_indexing_mode::full;
     props.retention_local_target_bytes = tristate<size_t>(1);
-    add_topic({model::kafka_namespace, topic_name}, 1, props).get();
-    wait_for_leader(ntp).get();
+    fixture->add_topic({model::kafka_namespace, topic_name}, 1, props).get();
+    fixture->wait_for_leader(ntp).get();
 
     // Do some sanity checks that our partition looks the way we expect (has a
     // log, archiver, etc).
-    auto partition = app.partition_manager.local().get(ntp);
+    auto partition = fixture->app.partition_manager.local().get(ntp);
     auto log = partition->log();
     auto archiver_ref = partition->archiver();
     ASSERT_TRUE(archiver_ref.has_value());
     auto& archiver = archiver_ref.value().get();
 
-    kafka_produce_transport producer(make_kafka_client().get());
+    kafka_produce_transport producer(fixture->make_kafka_client().get());
     producer.start().get();
 
     // Produce to partition until the manifest is large enough to trigger
@@ -203,7 +211,7 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
     vlog(e2e_test_log.info, "Reconciling storage bucket");
     std::map<model::offset, cloud_storage::partition_manifest>
       spillover_manifests;
-    for (const auto& [key, req] : get_targets()) {
+    for (const auto& [key, req] : fixture->get_targets()) {
         if (boost::algorithm::contains(key, "manifest") == false) {
             // Skip segments
             continue;
@@ -258,7 +266,7 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
 
     // Consume from start offset of the partition (data available in the STM).
     vlog(e2e_test_log.info, "Consuming from the partition");
-    kafka_consume_transport consumer(make_kafka_client().get());
+    kafka_consume_transport consumer(fixture->make_kafka_client().get());
     consumer.start().get();
     std::vector<kv_t> consumed_records;
     auto next_offset = archive_ko;
