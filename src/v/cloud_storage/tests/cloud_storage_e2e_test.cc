@@ -32,8 +32,7 @@ static ss::logger e2e_test_log("e2e_test");
 class e2e_fixture
   : public s3_imposter_fixture
   , public redpanda_thread_fixture
-  , public enable_cloud_storage_fixture
-  , public ::testing::Test {
+  , public enable_cloud_storage_fixture {
 public:
     e2e_fixture()
       : redpanda_thread_fixture(
@@ -45,7 +44,21 @@ public:
     }
 };
 
-TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
+class e2e_fixture_test : public ::testing::Test {
+public:
+    void SetUp() override {
+        seastar_test_mixin::run_async(
+          [this] { fixture.reset(new e2e_fixture); });
+    }
+    void TearDown() override {
+        seastar_test_mixin::run_async([this] { fixture.reset(); });
+    }
+
+protected:
+    std::unique_ptr<e2e_fixture> fixture;
+};
+
+TEST_F_ASYNC(e2e_fixture_test, test_produce_consume_from_cloud) {
     config::shard_local_cfg()
       .cloud_storage_disable_upload_loop_for_tests.set_value(true);
     const model::topic topic_name("tapioca");
@@ -53,17 +66,18 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
     cluster::topic_properties props;
     props.shadow_indexing = model::shadow_indexing_mode::full;
     props.retention_local_target_bytes = tristate<size_t>(1);
-    add_topic({model::kafka_namespace, topic_name}, 1, props).get();
-    wait_for_leader(ntp).get();
+    fixture->add_topic({model::kafka_namespace, topic_name}, 1, props).get();
+    fixture->wait_for_leader(ntp).get();
 
     // Do some sanity checks that our partition looks the way we expect (has a
     // log, archiver, etc).
-    auto partition = app.partition_manager.local().get(ntp);
+    auto partition = fixture->app.partition_manager.local().get(ntp);
     auto log = partition->log();
     auto& archiver = partition->archiver().value().get();
     ASSERT_TRUE(archiver.sync_for_tests().get());
 
-    tests::remote_segment_generator gen(make_kafka_client().get(), *partition);
+    tests::remote_segment_generator gen(
+      fixture->make_kafka_client().get(), *partition);
     ASSERT_EQ(3, gen.records_per_batch(3).produce().get());
     ASSERT_EQ(2, log->segments().size());
     ASSERT_EQ(1, archiver.manifest().size());
@@ -85,7 +99,7 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
 
     // Attempt to consume from the beginning of the log. Since our local log
     // has been truncated, this exercises reading from cloud storage.
-    kafka_consume_transport consumer(make_kafka_client().get());
+    kafka_consume_transport consumer(fixture->make_kafka_client().get());
     consumer.start().get();
     auto consumed_records = consumer
                               .consume_from_partition(
@@ -101,7 +115,7 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud) {
     }
 }
 
-TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
+TEST_F_ASYNC(e2e_fixture_test, test_produce_consume_from_cloud_with_spillover) {
 #ifndef _NDEBUG
     config::shard_local_cfg()
       .cloud_storage_disable_upload_loop_for_tests.set_value(true);
@@ -120,18 +134,18 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
     ASSERT_TRUE(props.is_compacted() == false);
     props.shadow_indexing = model::shadow_indexing_mode::full;
     props.retention_local_target_bytes = tristate<size_t>(1);
-    add_topic({model::kafka_namespace, topic_name}, 1, props).get();
-    wait_for_leader(ntp).get();
+    fixture->add_topic({model::kafka_namespace, topic_name}, 1, props).get();
+    fixture->wait_for_leader(ntp).get();
 
     // Do some sanity checks that our partition looks the way we expect (has a
     // log, archiver, etc).
-    auto partition = app.partition_manager.local().get(ntp);
+    auto partition = fixture->app.partition_manager.local().get(ntp);
     auto log = partition->log();
     auto archiver_ref = partition->archiver();
     ASSERT_TRUE(archiver_ref.has_value());
     auto& archiver = archiver_ref.value().get();
 
-    kafka_produce_transport producer(make_kafka_client().get());
+    kafka_produce_transport producer(fixture->make_kafka_client().get());
     producer.start().get();
 
     // Produce to partition until the manifest is large enough to trigger
@@ -203,7 +217,7 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
     vlog(e2e_test_log.info, "Reconciling storage bucket");
     std::map<model::offset, cloud_storage::partition_manifest>
       spillover_manifests;
-    for (const auto& [key, req] : get_targets()) {
+    for (const auto& [key, req] : fixture->get_targets()) {
         if (boost::algorithm::contains(key, "manifest") == false) {
             // Skip segments
             continue;
@@ -258,7 +272,7 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
 
     // Consume from start offset of the partition (data available in the STM).
     vlog(e2e_test_log.info, "Consuming from the partition");
-    kafka_consume_transport consumer(make_kafka_client().get());
+    kafka_consume_transport consumer(fixture->make_kafka_client().get());
     consumer.start().get();
     std::vector<kv_t> consumed_records;
     auto next_offset = archive_ko;
@@ -332,14 +346,13 @@ TEST_F_ASYNC(e2e_fixture, test_produce_consume_from_cloud_with_spillover) {
 #endif
 }
 
-class cloud_storage_manual_e2e_test
+class cloud_storage_manual_e2e_fixture
   : public s3_imposter_fixture
   , public redpanda_thread_fixture
-  , public enable_cloud_storage_fixture
-  , public ::testing::Test {
+  , public enable_cloud_storage_fixture {
 public:
     static constexpr auto segs_per_spill = 10;
-    cloud_storage_manual_e2e_test()
+    cloud_storage_manual_e2e_fixture()
       : redpanda_thread_fixture(
         redpanda_thread_fixture::init_cloud_storage_tag{},
         httpd_port_number()) {
@@ -388,6 +401,20 @@ public:
     archival::ntp_archiver* archiver;
 };
 
+class cloud_storage_manual_e2e_test : public ::testing::Test {
+public:
+    void SetUp() override {
+        seastar_test_mixin::run_async(
+          [this] { fixture.reset(new cloud_storage_manual_e2e_fixture); });
+    }
+    void TearDown() override {
+        seastar_test_mixin::run_async([this] { fixture.reset(); });
+    }
+
+protected:
+    std::unique_ptr<cloud_storage_manual_e2e_fixture> fixture;
+};
+
 namespace {
 
 ss::future<bool> check_consume_from_beginning(
@@ -424,7 +451,8 @@ TEST_F_ASYNC(cloud_storage_manual_e2e_test, test_consume_during_spillover) {
     config::shard_local_cfg().fetch_max_bytes.set_value(size_t{10});
     const auto records_per_seg = 5;
     const auto num_segs = 40;
-    tests::remote_segment_generator gen(make_kafka_client().get(), *partition);
+    tests::remote_segment_generator gen(
+      fixture->make_kafka_client().get(), *fixture->partition);
     auto total_records = gen.num_segments(num_segs)
                            .batches_per_segment(records_per_seg)
                            .produce()
@@ -438,11 +466,11 @@ TEST_F_ASYNC(cloud_storage_manual_e2e_test, test_consume_during_spillover) {
     clients.reserve(10);
     checks.reserve(10);
     for (int i = 0; i < 10; i++) {
-        clients.emplace_back(make_kafka_client().get());
+        clients.emplace_back(fixture->make_kafka_client().get());
     }
     for (auto& client : clients) {
-        checks.push_back(
-          check_consume_from_beginning(std::move(client), topic_name, g));
+        checks.push_back(check_consume_from_beginning(
+          std::move(client), fixture->topic_name, g));
     }
     auto cleanup = ss::defer([&] {
         if (!g.is_closed()) {
@@ -453,10 +481,11 @@ TEST_F_ASYNC(cloud_storage_manual_e2e_test, test_consume_during_spillover) {
         }
     });
 
-    auto start_before_spill = archiver->manifest().get_start_offset();
-    ASSERT_TRUE(archiver->sync_for_tests().get());
-    archiver->apply_spillover().get();
-    ASSERT_NE(start_before_spill, archiver->manifest().get_start_offset());
+    auto start_before_spill = fixture->archiver->manifest().get_start_offset();
+    ASSERT_TRUE(fixture->archiver->sync_for_tests().get());
+    fixture->archiver->apply_spillover().get();
+    ASSERT_NE(
+      start_before_spill, fixture->archiver->manifest().get_start_offset());
 
     g.close().get();
     for (auto& check : checks) {
