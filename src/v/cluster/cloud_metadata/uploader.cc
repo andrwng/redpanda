@@ -17,7 +17,9 @@
 #include "cluster/cloud_metadata/manifest_downloads.h"
 #include "cluster/cloud_metadata/offsets_upload_rpc_types.h"
 #include "cluster/logger.h"
+#include "cluster/topic_table.h"
 #include "model/fundamental.h"
+#include "model/namespace.h"
 #include "raft/consensus.h"
 #include "raft/group_manager.h"
 #include "raft/types.h"
@@ -25,6 +27,7 @@
 #include "ssx/sleep_abortable.h"
 #include "storage/api.h"
 #include "storage/snapshot.h"
+#include "utils/fragmented_vector.h"
 
 #include <seastar/core/condition-variable.hh>
 #include <seastar/core/coroutine.hh>
@@ -43,6 +46,7 @@ uploader::uploader(
   cloud_storage_clients::bucket_name bucket,
   cloud_storage::remote& remote,
   consensus_ptr raft0,
+  cluster::topic_table& topics,
   ss::shared_ptr<offsets_upload_requestor> offsets_uploader)
   : _group_manager(group_manager)
   , _storage(storage)
@@ -51,6 +55,7 @@ uploader::uploader(
                                   : model::cluster_uuid{})
   , _remote(remote)
   , _raft0(std::move(raft0))
+  , _topic_table(topics)
   , _offsets_uploader(*offsets_uploader)
   , _bucket(bucket)
   , _upload_interval_ms(
@@ -144,12 +149,35 @@ ss::future<error_outcome> uploader::upload_next_metadata(
         co_return upload_controller_errc;
     }
 
+    auto offsets_nt_cfg = _topic_table.get_topic_cfg(
+      model::kafka_consumer_offsets_nt);
+    std::vector<std::vector<ss::sstring>> uploaded_offset_paths(
+      offsets_nt_cfg->partition_count);
+    for (int i = 0; i < offsets_nt_cfg->partition_count; i++) {
+        offsets_upload_request req;
+        const auto& nt = model::kafka_consumer_offsets_nt;
+        req.offsets_ntp = model::ntp{nt.ns, nt.tp, model::partition_id{i}};
+        req.cluster_uuid = _cluster_uuid;
+        req.meta_id = manifest.metadata_id;
+        auto reply = co_await _offsets_uploader.request_upload(req, 30s);
+        if (reply.ec != cluster::errc::success) {
+            continue;
+        }
+        uploaded_offset_paths[i] = std::move(reply.uploaded_paths);
+    }
+    manifest.offsets_snapshots_by_partition = std::move(uploaded_offset_paths);
+
     if (co_await term_has_changed(synced_term)) {
         co_return error_outcome::term_has_changed;
     }
     manifest.upload_time_since_epoch
       = std::chrono::duration_cast<std::chrono::milliseconds>(
         ss::lowres_system_clock::now().time_since_epoch());
+    vlog(
+      clusterlog.debug,
+      "Uploading manifest to path {}: {}",
+      manifest.get_manifest_path(),
+      manifest);
     auto upload_result = co_await _remote.upload_manifest(
       _bucket, manifest, retry_node);
     if (upload_result != cloud_storage::upload_result::success) {
