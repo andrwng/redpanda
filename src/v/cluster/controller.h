@@ -37,6 +37,7 @@ namespace cloud_metadata {
 class cluster_recovery_backend;
 class uploader;
 class offsets_upload_requestor;
+class offsets_recovery_requestor;
 } // namespace cloud_metadata
 
 class cluster_discovery;
@@ -179,7 +180,8 @@ public:
     ss::future<> start(
       cluster_discovery&,
       ss::abort_source&,
-      ss::shared_ptr<cluster::cloud_metadata::offsets_upload_requestor>);
+      ss::shared_ptr<cluster::cloud_metadata::offsets_upload_requestor>,
+      ss::shared_ptr<cluster::cloud_metadata::offsets_recovery_requestor>);
 
     // prevents controller from accepting new requests
     ss::future<> shutdown_input();

@@ -15,6 +15,7 @@
 #include "cloud_storage/types.h"
 #include "cluster/cloud_metadata/cluster_manifest.h"
 #include "cluster/cloud_metadata/manifest_downloads.h"
+#include "cluster/cloud_metadata/offsets_recovery_rpc_types.h"
 #include "cluster/cluster_recovery_reconciler.h"
 #include "cluster/cluster_recovery_table.h"
 #include "cluster/cluster_utils.h"
@@ -57,6 +58,7 @@ cluster_recovery_backend::cluster_recovery_backend(
   cluster::config_frontend& config_frontend,
   cluster::security_frontend& security_frontend,
   cluster::topics_frontend& topics_frontend,
+  ss::shared_ptr<offsets_recovery_requestor> offsets_recovery,
   ss::sharded<cluster_recovery_table>& recovery_table,
   consensus_ptr raft0)
   : _recovery_manager(mgr)
@@ -72,6 +74,7 @@ cluster_recovery_backend::cluster_recovery_backend(
   , _config_frontend(config_frontend)
   , _security_frontend(security_frontend)
   , _topics_frontend(topics_frontend)
+  , _offsets_recovery(std::move(offsets_recovery))
   , _recovery_table(recovery_table)
   , _raft0(std::move(raft0)) {}
 

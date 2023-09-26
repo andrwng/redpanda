@@ -165,7 +165,9 @@ ss::future<> controller::start(
   cluster_discovery& discovery,
   ss::abort_source& shard0_as,
   ss::shared_ptr<cluster::cloud_metadata::offsets_upload_requestor>
-    offsets_uploader) {
+    offsets_uploader,
+  ss::shared_ptr<cluster::cloud_metadata::offsets_recovery_requestor>
+    offsets_recovery) {
     auto initial_raft0_brokers = discovery.founding_brokers();
     std::vector<model::node_id> seed_nodes;
     seed_nodes.reserve(initial_raft0_brokers.size());
@@ -604,7 +606,7 @@ ss::future<> controller::start(
             partition_balancer_backend::shard,
             &partition_balancer_backend::start);
       })
-      .then([this, offsets_uploader] {
+      .then([this, offsets_uploader, offsets_recovery] {
           auto& bucket_property
             = cloud_storage::configuration::get_bucket_config();
           if (
@@ -640,6 +642,7 @@ ss::future<> controller::start(
               _config_frontend.local(),
               _security_frontend.local(),
               _tp_frontend.local(),
+              offsets_recovery,
               std::ref(_recovery_table),
               _raft0);
           if (!config::shard_local_cfg()
