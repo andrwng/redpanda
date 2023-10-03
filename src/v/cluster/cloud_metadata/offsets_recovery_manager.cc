@@ -73,6 +73,7 @@ ss::future<error_outcome> offsets_recovery_manager::recover(
         auto reply = co_await _recovery_router.local().process_or_dispatch(
           std::move(req), ntp, retry_node.get_timeout());
         if (reply.ec != cluster::errc::success) {
+            vlog(clusterlog.debug, "Recovery request failed: {}", reply.ec);
             co_return error_outcome::download_failed;
         }
     }

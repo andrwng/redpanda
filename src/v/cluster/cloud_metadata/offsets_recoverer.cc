@@ -103,12 +103,12 @@ offsets_recoverer::recover(offsets_recovery_request req) {
                     if (auto offset_it = offsets_by_ntp.find(ntp);
                         offset_it != offsets_by_ntp.end()) {
                         auto hwm = offset_it->second;
-                        if (po.offset >= hwm) {
+                        if (po.offset > hwm) {
                             // The recovered partition doesn't have all the data
                             // required to restore the snapshot exactly. Trim
                             // such offsets to the recovered partition's end
                             // offset.
-                            po.offset = kafka::offset{hwm() - 1};
+                            po.offset = kafka::offset{hwm()};
                         }
                         // Add the NTP to our request topic.
                         const auto& t = tp.topic;

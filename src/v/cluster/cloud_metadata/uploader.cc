@@ -143,29 +143,45 @@ ss::future<error_outcome> uploader::upload_next_metadata(
       },
     };
 
+    vlog(clusterlog.debug, "Proceeding to controller snapshot upload");
     auto upload_controller_errc = co_await maybe_upload_controller_snapshot(
       manifest, lazy_as, retry_node);
     if (upload_controller_errc != error_outcome::success) {
         co_return upload_controller_errc;
     }
+    if (co_await term_has_changed(synced_term)) {
+        co_return error_outcome::term_has_changed;
+    }
 
+    vlog(clusterlog.debug, "Proceeding to offsets upload");
     auto offsets_nt_cfg = _topic_table.get_topic_cfg(
       model::kafka_consumer_offsets_nt);
-    std::vector<std::vector<ss::sstring>> uploaded_offset_paths(
-      offsets_nt_cfg->partition_count);
-    for (int i = 0; i < offsets_nt_cfg->partition_count; i++) {
-        offsets_upload_request req;
-        const auto& nt = model::kafka_consumer_offsets_nt;
-        req.offsets_ntp = model::ntp{nt.ns, nt.tp, model::partition_id{i}};
-        req.cluster_uuid = _cluster_uuid;
-        req.meta_id = manifest.metadata_id;
-        auto reply = co_await _offsets_uploader.request_upload(req, 30s);
-        if (reply.ec != cluster::errc::success) {
-            continue;
+    if (offsets_nt_cfg.has_value()) {
+        std::vector<std::vector<ss::sstring>> uploaded_offset_paths(
+          offsets_nt_cfg->partition_count);
+        for (int i = 0; i < offsets_nt_cfg->partition_count; i++) {
+            offsets_upload_request req;
+            const auto& nt = model::kafka_consumer_offsets_nt;
+            req.offsets_ntp = model::ntp{nt.ns, nt.tp, model::partition_id{i}};
+            req.cluster_uuid = _cluster_uuid;
+            req.meta_id = manifest.metadata_id;
+            vlog(
+              clusterlog.debug,
+              "Requesting offsets upload of {}",
+              req.offsets_ntp);
+            auto reply = co_await _offsets_uploader.request_upload(req, 30s);
+            if (reply.ec != cluster::errc::success) {
+                vlog(
+                  clusterlog.debug,
+                  "Error while requesting offsets upload of {}",
+                  req.offsets_ntp);
+                continue;
+            }
+            uploaded_offset_paths[i] = std::move(reply.uploaded_paths);
         }
-        uploaded_offset_paths[i] = std::move(reply.uploaded_paths);
+        manifest.offsets_snapshots_by_partition = std::move(
+          uploaded_offset_paths);
     }
-    manifest.offsets_snapshots_by_partition = std::move(uploaded_offset_paths);
 
     if (co_await term_has_changed(synced_term)) {
         co_return error_outcome::term_has_changed;
@@ -300,6 +316,7 @@ ss::future<error_outcome> uploader::maybe_upload_controller_snapshot(
 }
 
 ss::future<> uploader::upload_until_abort() {
+    vlog(clusterlog.debug, "Cluster metadata uploader starting...");
     // It's possible the cluster UUID wasn't available at construction time
     // (e.g. this node was in the process of joining the cluster).
     if (!co_await _storage.wait_for_cluster_uuid()) {
