@@ -430,6 +430,39 @@ ss::future<> cluster_recovery_backend::recover_until_term_change() {
     if (!_recovery_table.local().is_recovery_active()) {
         co_return;
     }
+    if (may_require_offsets_recovery(recovery_state.stage)) {
+        auto& manifest_offsets
+          = recovery_state.manifest.offsets_snapshots_by_partition;
+        std::vector<std::vector<cloud_storage::remote_segment_path>>
+          offsets_snapshot_paths(manifest_offsets.size());
+        for (size_t i = 0; i < offsets_snapshot_paths.size(); i++) {
+            std::transform(
+              manifest_offsets[i].begin(),
+              manifest_offsets[i].end(),
+              std::back_inserter(offsets_snapshot_paths[i]),
+              [](auto& p) { return cloud_storage::remote_segment_path{p}; });
+        }
+        retry_chain_node parent_retry(_as, 3600s, 1s);
+        auto err = co_await _offsets_recovery->recover(
+          parent_retry,
+          recovery_state.bucket,
+          std::move(offsets_snapshot_paths));
+        if (err != error_outcome::success) {
+            if (
+              err == error_outcome::term_has_changed
+              || err == error_outcome::not_ready) {
+                co_return;
+            }
+            co_await _recovery_manager.replicate_update(
+              synced_term,
+              recovery_stage::failed,
+              ssx::sformat(
+                "Failed to apply action for consumer offsets recovery: {}",
+                err));
+            co_return;
+        }
+    }
+
     // All done! Record success.
     co_await _recovery_manager.replicate_update(
       synced_term, recovery_stage::complete);
