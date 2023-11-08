@@ -2106,6 +2106,7 @@ SEASTAR_THREAD_TEST_CASE(test_sequence) {
     partition_manifest m;
     for (const auto& s : metas) {
         m.add(s);
+        m.flush_write_buffer();
     }
 }
 
