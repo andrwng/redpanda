@@ -248,6 +248,8 @@ public:
     std::string_view get_name() const final { return "archival_metadata_stm"; }
     ss::future<iobuf> take_snapshot(model::offset) final { co_return iobuf{}; }
 
+    ss::future<> load_from_file();
+
 private:
     ss::future<std::error_code> do_add_segments(
       std::vector<cloud_storage::segment_meta>,

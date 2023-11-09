@@ -2102,7 +2102,7 @@ SEASTAR_THREAD_TEST_CASE(test_sequence) {
         .delta_offset_end = model::offset_delta(185),
         .sname_format = cloud_storage::segment_name_format(2),
         .metadata_size_hint = 0},
-	};
+    };
     partition_manifest m;
     for (const auto& s : metas) {
         m.add(s);

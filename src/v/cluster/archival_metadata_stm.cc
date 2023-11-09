@@ -37,6 +37,7 @@
 #include "vlog.h"
 
 #include <seastar/core/coroutine.hh>
+#include <seastar/core/io_priority_class.hh>
 #include <seastar/core/sleep.hh>
 #include <seastar/util/bool_class.hh>
 #include <seastar/util/defer.hh>
@@ -1077,6 +1078,60 @@ ss::future<> archival_metadata_stm::apply_raft_snapshot(const iobuf&) {
       next_offset,
       start_offset,
       get_last_offset());
+}
+
+namespace {
+
+std::optional<cluster::stm_snapshot_header> read_snapshot_header(
+  iobuf_parser& parser, const model::ntp& ntp, const ss::sstring& name) {
+    auto version = reflection::adl<int8_t>{}.from(parser);
+    vassert(
+      version == cluster::stm_snapshot_version
+        || version == cluster::stm_snapshot_version_v0,
+      "[{} ({})] Unsupported persisted_stm snapshot_version {}",
+      ntp,
+      name,
+      version);
+
+    if (version == cluster::stm_snapshot_version_v0) {
+        return std::nullopt;
+    }
+
+    cluster::stm_snapshot_header header;
+    header.offset = model::offset(reflection::adl<int64_t>{}.from(parser));
+    header.version = reflection::adl<int8_t>{}.from(parser);
+    header.snapshot_size = reflection::adl<int32_t>{}.from(parser);
+    return header;
+}
+
+} // namespace
+
+ss::future<> archival_metadata_stm::load_from_file() {
+    std::optional<stm_snapshot> maybe_snapshot;
+    auto path = std::filesystem::path(
+      "/home/awong/Repos/redpanda/vbuild/archival_metadata.snapshot");
+    auto file = co_await ss::open_file_dma(path.string(), ss::open_flags::ro);
+    ss::file_input_stream_options options;
+    options.io_priority_class = ss::default_priority_class();
+    auto input = ss::make_file_input_stream(file, options);
+    auto reader = storage::snapshot_reader(file, std::move(input), path);
+
+    iobuf meta_buf = co_await reader.read_metadata();
+    iobuf_parser meta_parser(std::move(meta_buf));
+    auto header = read_snapshot_header(meta_parser, _raft->ntp(), name());
+    if (!header) {
+        // can't load old format of the snapshot, since snapshot is missing
+        // it will be reconstructed by replaying the log
+        co_await reader.close();
+        co_return;
+    }
+    stm_snapshot snapshot;
+    snapshot.header = *header;
+    snapshot.data = co_await read_iobuf_exactly(
+      reader.input(), snapshot.header.snapshot_size);
+    vlog(_log.info, "XXX header {}", snapshot.header.offset);
+    co_await reader.close();
+    co_await apply_local_snapshot(snapshot.header, std::move(snapshot.data));
 }
 
 ss::future<> archival_metadata_stm::apply_local_snapshot(
