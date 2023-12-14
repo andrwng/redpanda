@@ -490,17 +490,6 @@ segment_set disk_log_impl::find_sliding_range(
             // Skip over segments that are being truncated.
             continue;
         }
-        if (buf.empty() && !seg->has_compactible_data_records()) {
-            // To find the start of the sliding range, skip over segments that
-            // have been effectively entirely compacted away, i.e. who no
-            // longer have data or have only their last batch remaining.
-            //
-            // NOTE: We don't do this past the beginning of the sliding range
-            // so that the rest of the segments are contiguous.
-            seg->mark_as_finished_self_compaction();
-            seg->mark_as_finished_windowed_compaction();
-            continue;
-        }
         buf.emplace_back(seg);
     }
     segment_set segs(std::move(buf));
@@ -541,13 +530,6 @@ ss::future<bool> disk_log_impl::sliding_window_compact(
         vlog(gclog.debug, "[{}] no more segments to compact", config().ntp());
         co_return false;
     }
-    vlog(
-      gclog.debug,
-      "[{}] compacting {} segments in interval [{}, {}]",
-      config().ntp(),
-      segs.size(),
-      segs.front()->filename(),
-      segs.back()->filename());
     for (auto& seg : segs) {
         if (cfg.asrc) {
             cfg.asrc->check();
@@ -571,6 +553,28 @@ ss::future<bool> disk_log_impl::sliding_window_compact(
           seg->reader().filename(),
           result);
     }
+    // Remove any of the beginning segments that may only have one or no
+    // compactible records. They would be no-ops to compact.
+    while (!segs.empty()) {
+        if (segs.front()->has_compactible_data_records()) {
+            break;
+        }
+        // For all intents and purposes, these segments are already compacted.
+        auto seg = segs.front();
+        seg->mark_as_finished_windowed_compaction();
+        segs.pop_front();
+    }
+    if (segs.empty()) {
+        vlog(gclog.debug, "[{}] no more segments to compact", config().ntp());
+        co_return false;
+    }
+    vlog(
+      gclog.debug,
+      "[{}] window compacting {} segments in interval [{}, {}]",
+      config().ntp(),
+      segs.size(),
+      segs.front()->filename(),
+      segs.back()->filename());
 
     // TODO: add configuration to use simple_key_offset_map.
     std::unique_ptr<simple_key_offset_map> simple_map;

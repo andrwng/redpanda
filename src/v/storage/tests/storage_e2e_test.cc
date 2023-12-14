@@ -1548,19 +1548,19 @@ FIXTURE_TEST(adjacent_segment_compaction, storage_test_fixture) {
     // There are 4 segments, and the last is the active segments. The first two
     // will merge, and the third will be compacted but not merged.
     log->housekeeping(c_cfg).get0();
-    BOOST_REQUIRE_EQUAL(log->segment_count(), 4);
+    BOOST_REQUIRE_EQUAL(log->segment_count(), 3);
 
     // Check if it honors max_compactible offset by resetting it to the base
     // offset of first segment. Nothing should be compacted.
     const auto first_segment_offsets = log->segments().front()->offsets();
     c_cfg.compact.max_collectible_offset = first_segment_offsets.base_offset;
     log->housekeeping(c_cfg).get0();
-    BOOST_REQUIRE_EQUAL(log->segment_count(), 4);
+    BOOST_REQUIRE_EQUAL(log->segment_count(), 3);
 
     // The segment count will be reduced again.
     c_cfg.compact.max_collectible_offset = model::offset::max();
     log->housekeeping(c_cfg).get0();
-    BOOST_REQUIRE_EQUAL(log->segment_count(), 3);
+    BOOST_REQUIRE_EQUAL(log->segment_count(), 2);
 
     log->housekeeping(c_cfg).get0();
     BOOST_REQUIRE_EQUAL(log->segment_count(), 2);
