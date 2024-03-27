@@ -14,6 +14,7 @@ v_cc_library(
     segment_appender.cc
     segment_reader.cc
     skipping_data_source.cc
+    versioned_gaps.cc
   DEPS
     Seastar::seastar
     v::base
