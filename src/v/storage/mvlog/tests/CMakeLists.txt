@@ -13,6 +13,7 @@ rp_test(
     segment_io_test.cc
     segment_reader_test.cc
     skipping_data_source_test.cc
+    versioned_gaps_test.cc
   LIBRARIES
     v::gtest_main
     v::hashing
