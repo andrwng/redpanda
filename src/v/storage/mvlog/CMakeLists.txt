@@ -9,6 +9,7 @@ v_cc_library(
     entry_stream.cc
     entry_stream_utils.cc
     file.cc
+    log_reader.cc
     logger.cc
     readable_segment.cc
     segment_appender.cc
