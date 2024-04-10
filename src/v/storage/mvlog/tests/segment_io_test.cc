@@ -178,3 +178,42 @@ TEST_F(SegmentTest, TestBasicGetFilePos) {
     ASSERT_EQ(99, tail_batches.size());
     ASSERT_EQ(tail_batches[0].base_offset(), second_batch_start_offset);
 }
+
+TEST_F(SegmentTest, TestTruncateSegment) {
+    segment_appender appender(paging_file_.get());
+    auto in_batches
+      = model::test::make_random_batches(model::offset{0}, 100, true).get();
+    size_t batch_count = 0;
+    model::offset truncate_at_after;
+    for (auto& b : in_batches) {
+        if (batch_count++ == 50) {
+            truncate_at_after = b.base_offset();
+        }
+        appender.append(std::move(b)).get();
+    }
+    readable_segment readable_seg(paging_file_.get());
+    auto reader = readable_seg.make_reader(version_id{0});
+    auto file_pos_res = reader->find_filepos(truncate_at_after).get();
+    ASSERT_TRUE(file_pos_res.has_value());
+    ASSERT_TRUE(file_pos_res.value().has_value());
+
+    auto file_pos = file_pos_res.value().value();
+    auto gap_len = paging_file_->size() - file_pos;
+    auto gap = file_gap(file_pos, gap_len);
+    readable_seg.mutable_gaps()->add(gap, version_id{1});
+
+    in_batches
+      = model::test::make_random_batches(truncate_at_after, 50, true).get();
+    for (auto& b : in_batches) {
+        appender.append(std::move(b)).get();
+    }
+
+    storage::log_reader_config cfg{
+      model::offset{0}, model::offset::max(), ss::default_priority_class()};
+    auto new_reader = readable_seg.make_reader(version_id{1});
+    entry_stream entries(new_reader->make_stream());
+    batch_collector collector(cfg, model::term_id{0}, 128_MiB);
+    auto batches_res = collect_batches_from_stream(entries, collector).get();
+    ASSERT_EQ(batches_res.value(), collect_stream_outcome::end_of_stream);
+    ASSERT_EQ(100, collector.release_batches().size());
+}
