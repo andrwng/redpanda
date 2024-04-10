@@ -29,6 +29,10 @@ public:
       const version_id inclusive_id, readable_segment* segment);
     ~segment_reader();
 
+    // Returns the file position of the first entry with data at or after the
+    // given offset.
+    ss::future<result<std::optional<size_t>, errc>> find_filepos(model::offset);
+
     // Returns a stream starting from the given file position, until the end of
     // the segment file.
     //

@@ -142,3 +142,39 @@ TEST_F(SegmentTest, TestBoundedOffsets) {
         }
     }
 }
+
+TEST_F(SegmentTest, TestBasicGetFilePos) {
+    segment_appender appender(paging_file_.get());
+    auto in_batches
+      = model::test::make_random_batches(model::offset{0}, 100, true).get();
+    for (auto& b : in_batches) {
+        appender.append(std::move(b)).get();
+    }
+    const auto second_batch_start_offset = in_batches[1].base_offset();
+    readable_segment readable_seg(paging_file_.get());
+    ASSERT_GT(paging_file_->size(), 0);
+
+    storage::log_reader_config cfg{
+      model::offset{0}, model::offset::max(), ss::default_priority_class()};
+    batch_collector collector(cfg, model::term_id{0}, 128_MiB);
+    auto reader = readable_seg.make_reader(version_id{0});
+
+    // Find the start position of the second batch.
+    auto pos_res = reader->find_filepos(second_batch_start_offset).get();
+    ASSERT_TRUE(pos_res.has_value()) << pos_res.error();
+    auto pos_opt = pos_res.value();
+    ASSERT_TRUE(pos_opt.has_value());
+    ASSERT_GT(pos_opt.value(), 0);
+
+    // When the position is supplied back to a segment reader, the reader
+    // should be able to start reading batches.
+    batch_collector tail_collector(cfg, model::term_id{0}, 128_MiB);
+    entry_stream entries_tail(reader->make_stream(pos_opt.value()));
+    auto tail_res
+      = collect_batches_from_stream(entries_tail, tail_collector).get();
+    ASSERT_TRUE(tail_res.has_value());
+    ASSERT_EQ(tail_res.value(), collect_stream_outcome::end_of_stream);
+    auto tail_batches = tail_collector.release_batches();
+    ASSERT_EQ(99, tail_batches.size());
+    ASSERT_EQ(tail_batches[0].base_offset(), second_batch_start_offset);
+}

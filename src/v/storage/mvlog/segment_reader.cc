@@ -10,10 +10,13 @@
 #include "storage/mvlog/segment_reader.h"
 
 #include "base/vlog.h"
+#include "storage/mvlog/entry_stream.h"
+#include "storage/mvlog/entry_stream_utils.h"
 #include "storage/mvlog/file.h"
 #include "storage/mvlog/logger.h"
 #include "storage/mvlog/readable_segment.h"
 #include "storage/mvlog/skipping_data_source.h"
+#include "storage/record_batch_utils.h"
 
 namespace storage::experimental::mvlog {
 segment_reader::segment_reader(
@@ -64,6 +67,35 @@ segment_reader::make_read_intervals(size_t start_pos, size_t length) const {
     }
     read_intervals.emplace_back(cur_iter_pos, length);
     return read_intervals;
+}
+
+ss::future<result<std::optional<size_t>, errc>>
+segment_reader::find_filepos(model::offset target_offset) {
+    auto read_intervals = make_read_intervals(0, segment_->file_->size());
+    for (const auto& interval : read_intervals) {
+        entry_stream entries(make_stream(interval.offset, interval.length));
+        size_t cur_pos = interval.offset;
+        while (true) {
+            auto entry_res = co_await entries.next();
+            if (entry_res.has_error()) {
+                co_return entry_res.error();
+            }
+            auto& entry_opt = entry_res.value();
+            if (!entry_opt.has_value()) {
+                break;
+            }
+            const auto body_size = entry_opt->body.size_bytes();
+            auto entry_body = serde::from_iobuf<record_batch_entry_body>(
+              std::move(entry_opt->body));
+            auto batch_header = storage::batch_header_from_disk_iobuf(
+              std::move(entry_body.record_batch_header));
+            if (batch_header.base_offset >= target_offset) {
+                co_return cur_pos;
+            }
+            cur_pos += body_size + packed_entry_header_size;
+        }
+    }
+    co_return std::nullopt;
 }
 
 ss::input_stream<char> segment_reader::make_stream(size_t start_pos) const {
