@@ -28,6 +28,8 @@ public:
     // Callers are expected to flush the file after this returns.
     ss::future<> append(model::record_batch);
 
+    ss::future<> truncate(truncation_entry_body truncation_entry);
+
 private:
     // The paging file with which to perform I/O.
     file* file_;

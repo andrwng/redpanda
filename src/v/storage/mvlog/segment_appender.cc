@@ -48,4 +48,19 @@ ss::future<> segment_appender::append(model::record_batch batch) {
       file_->size());
 }
 
+ss::future<>
+segment_appender::truncate(truncation_entry_body truncation_entry) {
+    auto entry_body_buf = serde::to_iobuf(std::move(truncation_entry));
+    auto body_size = static_cast<int32_t>(entry_body_buf.size_bytes());
+    entry_header entry_hdr{
+      entry_header_crc(body_size, entry_type::truncation),
+      body_size,
+      entry_type::truncation,
+    };
+    iobuf buf;
+    buf.append(entry_header_to_iobuf(entry_hdr));
+    buf.append(std::move(entry_body_buf));
+    co_await file_->append(std::move(buf));
+}
+
 } // namespace storage::experimental::mvlog
