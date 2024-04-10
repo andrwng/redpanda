@@ -9,7 +9,10 @@
 #pragma once
 
 #include "bytes/iobuf.h"
+#include "container/fragmented_vector.h"
 #include "model/fundamental.h"
+#include "storage/mvlog/file_gap.h"
+#include "storage/mvlog/segment_identifier.h"
 
 #include <cstdint>
 
@@ -17,7 +20,8 @@ namespace storage::experimental::mvlog {
 
 enum class entry_type : int8_t {
     record_batch = 0,
-    max = record_batch,
+    truncation = 1,
+    max = truncation,
 };
 std::ostream& operator<<(std::ostream&, entry_type);
 
@@ -43,6 +47,30 @@ struct record_batch_entry_body
 
     // The term of the record batch.
     model::term_id term;
+};
+
+struct segment_truncation
+  : public serde::envelope<
+      segment_truncation,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    segment_id segment_id;
+    file_gap gap;
+};
+
+struct truncation_entry_body
+  : public serde::checksum_envelope<
+      truncation_entry_body,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    truncation_entry_body() = default;
+    auto serde_fields() { return std::tie(base_offset, gaps); }
+
+    // Lowest offset truncated.
+    model::offset base_offset;
+
+    // List of segment gaps added to the log in a single truncation.
+    chunked_vector<segment_truncation> gaps;
 };
 
 // Container for the deserialized bytes from an entry. Note that this isn't an

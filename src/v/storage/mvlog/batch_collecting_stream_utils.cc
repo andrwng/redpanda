@@ -60,6 +60,8 @@ collect_batches_from_stream(entry_stream& entries, batch_collector& collector) {
             }
             break;
         }
+        case entry_type::truncation:
+            continue;
         }
     }
 }

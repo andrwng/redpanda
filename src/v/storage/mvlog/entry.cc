@@ -19,6 +19,8 @@ std::ostream& operator<<(std::ostream& o, entry_type t) {
     switch (t) {
     case entry_type::record_batch:
         return o << "record_batch";
+    case entry_type::truncation:
+        return o << "truncation";
     }
     fmt::print(o, "unknown ({})", static_cast<int8_t>(t));
     return o;
