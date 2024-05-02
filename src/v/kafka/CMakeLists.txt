@@ -57,6 +57,7 @@ v_cc_library(
  DEPS
     Seastar::seastar
     v::bytes
+    v::random
     v::rpc
     v::cluster
     v::kafka_protocol

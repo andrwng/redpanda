@@ -3187,6 +3187,12 @@ configuration::configuration()
       {.needs_restart = needs_restart::no, .visibility = visibility::tunable},
       std::numeric_limits<uint64_t>::max(),
       {.min = 1})
+  , unsafe_random_failures(
+      *this,
+      "unsafe_random_failures",
+      "Unsafe random failures",
+      {.needs_restart = needs_restart::no, .visibility = visibility::tunable},
+      false)
   , unsafe_enable_consumer_offsets_delete_retention(
       *this,
       "unsafe_enable_consumer_offsets_delete_retention",

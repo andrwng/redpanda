@@ -10,14 +10,19 @@
 #include "net/connection.h"
 
 #include "base/seastarx.h"
+#include "base/units.h"
+#include "config/configuration.h"
 #include "net/exceptions.h"
 #include "net/types.h"
+#include "random/generators.h"
 #include "ssx/abort_source.h"
 
 #include <seastar/core/future.hh>
 #include <seastar/net/tls.hh>
 
 #include <gnutls/gnutls.h>
+
+#include <chrono>
 
 namespace net {
 
@@ -157,6 +162,22 @@ connection::connection(
 }
 
 connection::~connection() noexcept { _hook.erase(_hook.iterator_to(*this)); }
+
+ss::future<> connection::wait_for_input_shutdown() {
+    using namespace std::chrono_literals;
+    if (
+      config::shard_local_cfg().unsafe_random_failures()
+      && random_generators::get_int(3) == 0) {
+        auto rand_ms = random_generators::get_int(10, 200);
+        _log->info("AWONG FAILING {} IN {} MS", name(), rand_ms);
+        co_await ss::sleep(rand_ms * 1ms);
+        co_return;
+    }
+    if (!_fd) {
+        co_return;
+    }
+    co_await _fd.wait_input_shutdown();
+}
 
 void connection::shutdown_input() {
     try {

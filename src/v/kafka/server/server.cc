@@ -51,6 +51,7 @@
 #include "kafka/server/response.h"
 #include "kafka/server/usage_manager.h"
 #include "net/connection.h"
+#include "net/types.h"
 #include "security/acl.h"
 #include "security/audit/schemas/iam.h"
 #include "security/audit/schemas/utils.h"

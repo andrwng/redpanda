@@ -25,11 +25,13 @@
 #include "model/record.h"
 #include "model/record_batch_types.h"
 #include "raft/consensus.h"
+#include "random/generators.h"
 #include "resource_mgmt/io_priority.h"
 #include "ssx/future-util.h"
 #include "ssx/sformat.h"
 #include "ssx/watchdog.h"
 #include "storage/parser.h"
+#include "storage/parser_errc.h"
 #include "storage/segment_index.h"
 #include "utils/retry_chain_node.h"
 #include "utils/stream_utils.h"
@@ -1384,6 +1386,11 @@ remote_segment_batch_reader::read_some(
         _cur_ot_state = ot_state;
         auto deferred = ss::defer([this] { _cur_ot_state = std::nullopt; });
         auto new_bytes_consumed = co_await _parser->consume();
+        if (config::shard_local_cfg().unsafe_random_failures()) {
+            if (random_generators::get_int(3) == 0) {
+                co_return storage::parser_errc::end_of_stream;
+            }
+        }
         if (!new_bytes_consumed) {
             co_return new_bytes_consumed.error();
         }

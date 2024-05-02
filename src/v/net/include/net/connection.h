@@ -70,9 +70,7 @@ public:
         return ss::tls::get_dn_information(_fd);
     }
 
-    ss::future<> wait_for_input_shutdown() {
-        return _fd ? _fd.wait_input_shutdown() : ss::make_ready_future<>();
-    }
+    ss::future<> wait_for_input_shutdown();
 
     bool tls_enabled() const { return _tls_enabled; }
 

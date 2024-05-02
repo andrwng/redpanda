@@ -32,6 +32,7 @@
 #include "model/record_utils.h"
 #include "model/timeout_clock.h"
 #include "net/connection.h"
+#include "net/exceptions.h"
 #include "random/generators.h"
 #include "resource_mgmt/io_priority.h"
 #include "ssx/semaphore.h"

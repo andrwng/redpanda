@@ -18,6 +18,7 @@
 #include "cluster/cloud_metadata/tests/manual_mixin.h"
 #include "cluster/health_monitor_frontend.h"
 #include "config/configuration.h"
+#include "finjector/stress_fiber.h"
 #include "kafka/server/tests/list_offsets_utils.h"
 #include "kafka/server/tests/produce_consume_utils.h"
 #include "model/fundamental.h"
@@ -403,24 +404,35 @@ ss::future<bool> check_consume_from_beginning(
   kafka::client::transport client,
   const model::topic& topic_name,
   ss::gate& gate) {
-    kafka_consume_transport consumer(std::move(client));
-    co_await consumer.start();
+    std::optional<kafka_consume_transport> consumer;
+    while (!gate.is_closed()) {
+        try {
+            consumer.emplace(std::move(client));
+            co_await consumer->start();
+            break;
+        } catch (...) {
+            continue;
+        }
+    }
     int iters = 0;
     while (iters == 0 || !gate.is_closed()) {
         auto holder = gate.hold();
-        auto kvs = co_await consumer.consume_from_partition(
-          topic_name, model::partition_id(0), model::offset(0));
-        if (kvs.empty()) {
-            vlog(e2e_test_log.error, "no fetch results");
-            co_return false;
-        }
-        if (kvs[0].key != "key0") {
-            vlog(e2e_test_log.error, "{} != key0", kvs[0].key);
-            co_return false;
-        }
-        if (kvs[0].val != "val0") {
-            vlog(e2e_test_log.error, "{} != val0", kvs[0].val);
-            co_return false;
+        try {
+            auto kvs = co_await consumer->consume_from_partition(
+              topic_name, model::partition_id(0), model::offset(0));
+            if (kvs.empty()) {
+                vlog(e2e_test_log.error, "no fetch results");
+                co_return false;
+            }
+            if (kvs[0].key != "key0") {
+                vlog(e2e_test_log.error, "{} != key0", kvs[0].key);
+                co_return false;
+            }
+            if (kvs[0].val != "val0") {
+                vlog(e2e_test_log.error, "{} != val0", kvs[0].val);
+                co_return false;
+            }
+        } catch (...) {
         }
         iters++;
     }
@@ -473,6 +485,65 @@ FIXTURE_TEST(test_consume_during_spillover, cloud_storage_manual_e2e_test) {
         BOOST_CHECK(check.get());
     }
     cleanup.cancel();
+}
+
+FIXTURE_TEST(test_crash, cloud_storage_manual_e2e_test) {
+    const auto records_per_seg = 5;
+    const auto num_segs = 40;
+    tests::remote_segment_generator gen(make_kafka_client().get(), *partition);
+    auto total_records = gen.num_segments(num_segs)
+                           .batches_per_segment(records_per_seg)
+                           .batch_time_delta_ms(10)
+                           .produce()
+                           .get();
+    BOOST_REQUIRE_GE(total_records, 200);
+    ss::abort_source as;
+    storage::housekeeping_config housekeeping_conf(
+      model::timestamp::min(),
+      1, // max_bytes_in_log
+      log->stm_manager()->max_collectible_offset(),
+      ss::default_priority_class(),
+      as);
+    partition->log()->housekeeping(housekeeping_conf).get();
+    RPTEST_REQUIRE_EVENTUALLY(
+      10s, [log = partition->log()] { return log->segments().size() == 1; });
+
+    test_local_cfg.get("unsafe_random_failures").set_value(true);
+    std::vector<kafka::client::transport> clients;
+    std::vector<ss::future<bool>> checks;
+    clients.reserve(10);
+    checks.reserve(10);
+    ss::gate g;
+    for (int i = 0; i < 10; i++) {
+        while (true) {
+            try {
+                auto client = make_kafka_client().get();
+                clients.emplace_back(std::move(client));
+                break;
+            } catch (...) {
+                continue;
+            }
+        }
+    }
+    stress_config cfg;
+    cfg.min_spins_per_scheduling_point = 0;
+    cfg.max_spins_per_scheduling_point = 100;
+    cfg.num_fibers = 10;
+    app.stress_fiber_manager.local().start(cfg);
+    for (auto& client : clients) {
+        checks.push_back(
+          check_consume_from_beginning(std::move(client), topic_name, g));
+    }
+    auto cleanup = ss::defer([&] {
+        if (!g.is_closed()) {
+            g.close().get();
+        }
+        for (auto& check : checks) {
+            check.get();
+        }
+    });
+    ss::sleep(10ms).get();
+    g.close().get();
 }
 
 // Regression test for #15042, where a timequery could land below the archive
