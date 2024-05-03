@@ -69,7 +69,7 @@ TEST_F(SegmentTest, TestBasicRoundTrip) {
     storage::log_reader_config cfg{
       model::offset{0}, model::offset::max(), ss::default_priority_class()};
     batch_collector collector(cfg, model::term_id{0}, 128_MiB);
-    auto reader = readable_seg.make_reader();
+    auto reader = readable_seg.make_reader(version_id{0});
 
     entry_stream entries(reader->make_stream());
     auto res = collect_batches_from_stream(entries, collector).get();
@@ -93,7 +93,7 @@ TEST_F(SegmentTest, TestFullCollector) {
       model::offset{0}, model::offset::max(), ss::default_priority_class()};
     batch_collector collector(
       cfg, model::term_id{0}, /*max_buffer_size*/ 0_MiB);
-    auto reader = readable_seg.make_reader();
+    auto reader = readable_seg.make_reader(version_id{0});
 
     // Since our max bytes is so low, each time we read, we will see the buffer
     // as full.
@@ -118,7 +118,7 @@ TEST_F(SegmentTest, TestBoundedOffsets) {
     readable_segment readable_seg(paging_file_.get());
 
     ASSERT_GT(paging_file_->size(), 0);
-    auto reader = readable_seg.make_reader();
+    auto reader = readable_seg.make_reader(version_id{0});
     auto bounded_offset = model::prev_offset(in_batches.back().base_offset());
 
     for (int min = 0; min <= bounded_offset(); min++) {

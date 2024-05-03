@@ -16,18 +16,53 @@
 #include "storage/mvlog/skipping_data_source.h"
 
 namespace storage::experimental::mvlog {
-segment_reader::segment_reader(readable_segment* segment)
-  : segment_(segment) {
+segment_reader::segment_reader(
+  const version_id inclusive_id, readable_segment* segment)
+  : inclusive_id_(inclusive_id)
+  , segment_(segment) {
     ++segment_->num_readers_;
 }
 segment_reader::~segment_reader() { --segment_->num_readers_; }
 
 skipping_data_source::read_list_t
 segment_reader::make_read_intervals(size_t start_pos, size_t length) const {
-    // TODO(awong): a future commit will build appropriate intervals for this
-    // reader's truncation id.
+    auto file_gaps = segment_->gaps().gaps_up_to_including(inclusive_id_);
+    const size_t max_pos = start_pos + length - 1;
+    auto cur_iter_pos = start_pos;
     skipping_data_source::read_list_t read_intervals;
-    read_intervals.emplace_back(start_pos, length);
+
+    // Iterate through the gaps associated with the version_id, skipping any
+    // that are entirely below the start position.
+    while (!file_gaps.empty()) {
+        if (cur_iter_pos > max_pos) {
+            // The next gap is past the end of the interval.
+            break;
+        }
+        auto gap_it = file_gaps.begin();
+        auto next_gap_max = gap_it->end - 1;
+        if (cur_iter_pos > next_gap_max) {
+            // We are ahead of the next gap. Drop it from the list to consider.
+            file_gaps.erase(gap_it);
+            continue;
+        }
+        if (cur_iter_pos < gap_it->start) {
+            // The next gap is ahead of us. Read up to the start of it and skip
+            // over the gap.
+            read_intervals.emplace_back(
+              cur_iter_pos, gap_it->start - cur_iter_pos);
+            vlog(
+              log.info,
+              "Reading interval [{}, {})",
+              cur_iter_pos,
+              gap_it->start);
+        }
+        // We are in the middle of a gap. Skip to just past the max.
+        // Note, end is exclusive.
+        cur_iter_pos = gap_it->end;
+        file_gaps.erase(gap_it);
+        continue;
+    }
+    read_intervals.emplace_back(cur_iter_pos, length);
     return read_intervals;
 }
 
