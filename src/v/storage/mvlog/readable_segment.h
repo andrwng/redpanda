@@ -8,6 +8,9 @@
 // by the Apache License, Version 2.0
 #pragma once
 
+#include "storage/mvlog/version_id.h"
+#include "storage/mvlog/versioned_gaps.h"
+
 #include <memory>
 
 namespace storage::experimental::mvlog {
@@ -22,13 +25,18 @@ public:
     explicit readable_segment(file* f)
       : file_(f) {}
 
-    std::unique_ptr<segment_reader> make_reader();
+    std::unique_ptr<segment_reader> make_reader(const version_id tid);
     size_t num_readers() const { return num_readers_; }
+    const versioned_gap_list& gaps() const { return gaps_; }
+    versioned_gap_list* mutable_gaps() { return &gaps_; }
 
 private:
     friend class segment_reader;
 
     file* file_;
+
+    // TODO(awong): these could be lazily materialized.
+    versioned_gap_list gaps_;
 
     size_t num_readers_{0};
 };

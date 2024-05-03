@@ -10,7 +10,10 @@
 
 #include "storage/mvlog/batch_collector.h"
 #include "storage/mvlog/skipping_data_source.h"
+#include "storage/mvlog/version_id.h"
 #include "storage/types.h"
+
+#include <gtest/gtest_prod.h>
 
 namespace storage::experimental::mvlog {
 
@@ -24,7 +27,8 @@ public:
     segment_reader& operator=(segment_reader&) = delete;
     segment_reader& operator=(segment_reader&&) = delete;
 
-    explicit segment_reader(readable_segment* segment);
+    explicit segment_reader(
+      const version_id inclusive_id, readable_segment* segment);
     ~segment_reader();
 
     // Returns a stream starting from the given file position, until the end of
@@ -34,13 +38,19 @@ public:
     ss::input_stream<char> make_stream(size_t start_pos = 0) const;
 
 private:
+    FRIEND_TEST(SegmentReaderTest, TestReadIntervals);
+
     // Returns the set of file position intervals appropriate for this reader's
-    // truncation id.
+    // version id.
     skipping_data_source::read_list_t
     make_read_intervals(size_t start_pos, size_t length) const;
 
     // Returns a stream starting at the file position with the given length.
     ss::input_stream<char> make_stream(size_t start_pos, size_t length) const;
+
+    // The version id with which this reader is versioned. Only gaps
+    // versioned with this id or lower are materialized by this reader.
+    const version_id inclusive_id_;
 
     // The underlying readable segment file.
     readable_segment* segment_;

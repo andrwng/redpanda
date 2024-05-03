@@ -10,11 +10,13 @@
 #include "storage/mvlog/readable_segment.h"
 
 #include "storage/mvlog/segment_reader.h"
+#include "storage/mvlog/version_id.h"
 
 namespace storage::experimental::mvlog {
 
-std::unique_ptr<segment_reader> readable_segment::make_reader() {
-    return std::make_unique<segment_reader>(this);
+std::unique_ptr<segment_reader>
+readable_segment::make_reader(const version_id tid) {
+    return std::make_unique<segment_reader>(tid, this);
 }
 
 } // namespace storage::experimental::mvlog
