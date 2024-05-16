@@ -54,8 +54,18 @@ struct segment_truncation
       segment_truncation,
       serde::version<0>,
       serde::compat_version<0>> {
-    segment_id segment_id;
-    file_gap gap;
+    segment_truncation() = default;
+    auto serde_fields() { return std::tie(segment_id, gap); }
+
+    segment_truncation(segment_id id, size_t start_pos, size_t len)
+      : segment_id(id)
+      , gap(start_pos, len) {}
+
+    // Identifier for the truncated segment.
+    segment_id segment_id{0};
+
+    // The gap created in this segment file.
+    file_gap gap{};
 };
 
 struct truncation_entry_body

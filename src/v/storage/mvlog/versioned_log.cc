@@ -10,11 +10,14 @@
 #include "storage/mvlog/versioned_log.h"
 
 #include "container/fragmented_vector.h"
+#include "model/fundamental.h"
 #include "model/offset_interval.h"
+#include "storage/mvlog/entry.h"
 #include "storage/mvlog/file.h"
 #include "storage/mvlog/logger.h"
 #include "storage/mvlog/readable_segment.h"
 #include "storage/mvlog/segment_appender.h"
+#include "storage/mvlog/segment_reader.h"
 
 #include <seastar/core/circular_buffer.hh>
 #include <seastar/core/io_priority_class.hh>
@@ -123,6 +126,163 @@ ss::future<> versioned_log::close() {
     for (auto& seg : segs_) {
         co_await seg->segment_file->close();
     }
+    for (auto& seg : segs_pending_removal_) {
+        co_await seg->segment_file->close();
+    }
+}
+
+versioned_log::segments_t::iterator
+versioned_log::find_seg_contains_or_greater(model::offset target) {
+    // Want to find the first segment that contains `target` if it exists, or
+    // the first segment after `target` if it doesn't.
+
+    // TODO(awong): binary search with lower_bound.
+    auto iter = segs_.begin();
+    for (; iter != segs_.end(); iter++) {
+        const auto& s = iter->get();
+        if (s->offsets.max() <= target) {
+            continue;
+        }
+        if (s->offsets.min() >= target) {
+            return iter;
+        }
+    }
+    return iter;
+}
+
+ss::future<> versioned_log::truncate_active_seg_unlocked(
+  model::offset new_next_offset, version_id new_version_id) {
+    vassert(active_seg_, "Expected active segment");
+    vlog(
+      log.debug,
+      "Truncating active segment to offset {}: current offsets [{}, {})",
+      new_next_offset,
+      active_seg_->base_offset,
+      active_seg_->next_offset);
+    auto seg_truncation = co_await build_segment_truncation(
+      new_next_offset, active_seg_.get());
+    vlog(
+      log.trace,
+      "Gap at filepos [{}, {})",
+      seg_truncation.gap.start_pos,
+      seg_truncation.gap.start_pos + seg_truncation.gap.length);
+
+    truncation_entry_body truncation_entry;
+    truncation_entry.base_offset = new_next_offset;
+    truncation_entry.gaps.emplace_back(seg_truncation);
+    co_await active_seg_->appender->truncate(std::move(truncation_entry));
+
+    // Update the in-memory state.
+    active_seg_->readable_seg->mutable_gaps()->add(
+      seg_truncation.gap, new_version_id);
+    active_seg_->next_offset = new_next_offset;
+    cur_version_id_ = new_version_id;
+}
+
+ss::future<> versioned_log::truncate(model::offset new_next_offset) {
+    auto lock = active_segment_lock_.try_get_units();
+    if (!lock.has_value()) {
+        lock = co_await active_segment_lock_.get_units();
+    }
+    vlog(log.debug, "Truncating log so next offset is {}", new_next_offset);
+    const auto log_next_offset = next_offset();
+    const auto new_version_id = version_id(cur_version_id_() + 1);
+    if (log_next_offset <= new_next_offset) {
+        // Nothing to truncate!
+        // TODO(awong): we should move the offset.
+        vlog(
+          log.debug,
+          "Nothing to truncate: {} <= {}",
+          log_next_offset,
+          new_next_offset);
+        co_return;
+    }
+
+    // Handle truncations that may entirely be covered by the active segment.
+    if (active_seg_ && active_seg_->base_offset <= new_next_offset) {
+        co_return co_await truncate_active_seg_unlocked(
+          new_next_offset, new_version_id);
+    }
+
+    auto first_truncated_seg_iter = find_seg_contains_or_greater(
+      new_next_offset);
+    if (first_truncated_seg_iter == segs_.end()) {
+        // The truncation point is in between the active segment and the last
+        // segment. Still need to truncate the active segment.
+        co_return co_await truncate_active_seg_unlocked(
+          new_next_offset, new_version_id);
+    }
+
+    // From here on out, we assume that we will truncate at least one segment
+    // below the active segment.
+    const auto first_truncated_offsets
+      = first_truncated_seg_iter->get()->offsets;
+    // Guaranteed by find_seg_contains_or_greater().
+    vassert(
+      new_next_offset <= first_truncated_offsets.max(),
+      "Found incorrect segment, {} is above {}",
+      new_next_offset,
+      first_truncated_offsets);
+
+    truncation_entry_body truncation_entry;
+    truncation_entry.base_offset = new_next_offset;
+    std::optional<file_gap> first_partial_seg_gap;
+    std::optional<file_gap> active_seg_gap;
+    auto* first_truncated_seg = first_truncated_seg_iter->get();
+    auto first_fully_truncated_seg_iter = first_truncated_seg_iter;
+    if (first_truncated_seg->offsets.min() < new_next_offset) {
+        // The first truncated segment isn't being fully truncated. Build the
+        // partial truncation and move onto gathering fully truncated segments.
+        auto seg_truncation = co_await build_segment_truncation(
+          new_next_offset, first_truncated_seg);
+        first_partial_seg_gap = seg_truncation.gap;
+        truncation_entry.gaps.emplace_back(seg_truncation);
+        ++first_fully_truncated_seg_iter;
+    }
+    // Collect segments that are fully truncated and need removal.
+    for (auto iter = first_fully_truncated_seg_iter; iter != segs_.end();
+         ++iter) {
+        auto seg_truncation = build_full_segment_truncation(iter->get());
+        truncation_entry.gaps.emplace_back(seg_truncation);
+    }
+    // Guaranteed to be non-empty because first_truncated_seg_iter != end.
+    vassert(
+      !truncation_entry.gaps.empty(), "Constructed empty truncation entry");
+
+    if (active_seg_) {
+        auto seg_truncation = build_full_segment_truncation(active_seg_.get());
+        active_seg_gap = seg_truncation.gap;
+    } else {
+        co_await create_unlocked(new_next_offset);
+    }
+    co_await active_seg_->appender->truncate(std::move(truncation_entry));
+
+    // Now that the truncation has been persisted to disk, apply in-memory
+    // metadata updates.
+    if (first_partial_seg_gap.has_value()) {
+        first_truncated_seg->readable_seg->mutable_gaps()->add(
+          *first_partial_seg_gap, new_version_id);
+        auto new_bounds = model::bounded_offset_interval::checked(
+          first_truncated_seg->offsets.min(),
+          model::prev_offset(new_next_offset));
+        first_truncated_seg->offsets = new_bounds;
+    }
+    if (active_seg_gap.has_value()) {
+        active_seg_->readable_seg->mutable_gaps()->add(
+          *active_seg_gap, new_version_id);
+    }
+    for (auto it = first_fully_truncated_seg_iter; it != segs_.end(); ++it) {
+        vlog(
+          log.debug,
+          "Removing fully truncated segment {} offsets {}",
+          it->get()->id,
+          it->get()->offsets);
+        segs_pending_removal_.emplace_back(it->release());
+    }
+    segs_.erase(first_fully_truncated_seg_iter, segs_.end());
+    active_seg_->base_offset = new_next_offset;
+    active_seg_->next_offset = new_next_offset;
+    cur_version_id_ = new_version_id;
 }
 
 ss::future<> versioned_log::append(model::record_batch b) {
@@ -159,6 +319,16 @@ size_t versioned_log::segment_count() const {
 bool versioned_log::has_active_segment() const {
     return active_seg_ != nullptr;
 }
+model::offset versioned_log::next_offset() const {
+    if (active_seg_) {
+        return active_seg_->next_offset;
+    }
+    if (!segs_.empty()) {
+        return model::next_offset(segs_.back()->offsets.max());
+    }
+    // TODO(awong): Need to take into account log start offset.
+    return model::offset{0};
+}
 
 size_t versioned_log::compute_max_segment_size() const {
     if (
@@ -177,6 +347,44 @@ versioned_log::compute_roll_deadline() const {
         return std::nullopt;
     }
     return active_seg_->construct_time + ntp_cfg_.segment_ms().value();
+}
+
+ss::future<segment_truncation> versioned_log::build_segment_truncation(
+  segment_id id,
+  readable_segment& readable_seg,
+  file& seg_file,
+  model::offset truncate_offset) {
+    version_id cur_version_id{0};
+    auto seg_reader = readable_seg.make_reader(cur_version_id);
+    auto find_res = co_await seg_reader->find_filepos(truncate_offset);
+    if (find_res.has_error()) {
+        // Likely an io error or corruption.
+        // XXX(awong)
+    }
+    auto truncate_start_pos = find_res.value();
+    if (!truncate_start_pos.has_value()) {
+        // All data in the segment is below the truncation point.
+        // This segment should not be truncated.
+        // XXX(awong)
+    }
+    const auto truncate_end_pos = seg_file.size();
+
+    // Return the segment truncation metadata.
+    segment_truncation seg_truncation(
+      id, *truncate_start_pos, truncate_end_pos - *truncate_start_pos);
+    co_return seg_truncation;
+}
+
+segment_truncation
+versioned_log::build_full_segment_truncation(active_segment* s) {
+    segment_truncation seg_truncation(s->id, 0, s->segment_file->size());
+    return seg_truncation;
+}
+
+segment_truncation
+versioned_log::build_full_segment_truncation(readonly_segment* s) {
+    segment_truncation seg_truncation(s->id, 0, s->segment_file->size());
+    return seg_truncation;
 }
 
 } // namespace storage::experimental::mvlog

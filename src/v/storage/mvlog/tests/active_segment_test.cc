@@ -8,6 +8,7 @@
 // by the Apache License, Version 2.0
 
 #include "base/units.h"
+#include "model/fundamental.h"
 #include "model/tests/random_batch.h"
 #include "random/generators.h"
 #include "storage/directories.h"
@@ -32,8 +33,10 @@ public:
     }
 
     void TearDown() override {
-        log_->close().get();
-        log_.reset();
+        if (log_) {
+            log_->close().get();
+            log_.reset();
+        }
         std::filesystem::remove_all(std::filesystem::path(base_dir_));
     }
     versioned_log* make_log(
@@ -48,11 +51,12 @@ public:
         return log_.get();
     }
 
-    ss::future<ss::circular_buffer<model::record_batch>>
-    write_random_batches(versioned_log* log, int num_batches) {
-        auto in_batches = model::test::make_random_batches(
-                            model::offset{0}, num_batches, true)
-                            .get();
+    ss::future<ss::circular_buffer<model::record_batch>> write_random_batches(
+      versioned_log* log,
+      int num_batches,
+      model::offset base = model::offset{0}) {
+        auto in_batches
+          = model::test::make_random_batches(base, num_batches, true).get();
         for (const auto& b : in_batches) {
             co_await log->append(b.copy());
         }
@@ -155,4 +159,124 @@ TEST_F(ActiveSegmentTest, TestApplySegmentMsEmpty) {
     ASSERT_EQ(1, log->segment_count());
     write_random_batches(log, 1).get();
     ASSERT_EQ(1, log->segment_count());
+}
+
+TEST_F(ActiveSegmentTest, TestSuffixTruncateEmptyLog) {
+    auto* log = make_log(128_MiB, tristate<std::chrono::milliseconds>{});
+    ASSERT_EQ(0, log->segment_count());
+    ASSERT_EQ(model::offset{0}, log->next_offset());
+
+    log->truncate(model::offset{0}).get();
+    ASSERT_EQ(0, log->segment_count());
+    ASSERT_EQ(model::offset{0}, log->next_offset());
+}
+
+TEST_F(ActiveSegmentTest, TestSuffixTruncateAboveLog) {
+    auto* log = make_log(128_MiB, tristate<std::chrono::milliseconds>{});
+    auto batches = write_random_batches(log, 1).get();
+    ASSERT_EQ(1, log->segment_count());
+
+    auto log_next_offset = model::next_offset(batches.back().last_offset());
+    ASSERT_EQ(log_next_offset, log->next_offset());
+    ASSERT_EQ(1, log->segment_count());
+
+    log->truncate(log_next_offset).get();
+    ASSERT_EQ(log_next_offset, log->next_offset());
+    ASSERT_EQ(1, log->segment_count());
+
+    // Truncating past the end should be a no-op.
+    log->truncate(model::next_offset(log_next_offset)).get();
+    ASSERT_EQ(log_next_offset, log->next_offset());
+    ASSERT_EQ(1, log->segment_count());
+}
+
+TEST_F(ActiveSegmentTest, TestSuffixTruncateBelowLog) {
+    auto* log = make_log(128_MiB, tristate<std::chrono::milliseconds>{});
+    auto batches = write_random_batches(log, 1, model::offset{10}).get();
+    ASSERT_EQ(1, log->segment_count());
+
+    log->truncate(model::offset{0}).get();
+    ASSERT_EQ(model::offset{0}, log->next_offset());
+    ASSERT_EQ(1, log->segment_count());
+}
+
+TEST_F(ActiveSegmentTest, TestSuffixTruncateInsideActiveSegment) {
+    auto* log = make_log(128_MiB, tristate<std::chrono::milliseconds>{});
+    auto batches = write_random_batches(log, 1).get();
+    ASSERT_EQ(1, log->segment_count());
+
+    // Truncate earlier and earlier.
+    for (int64_t i = batches.back().last_offset(); i >= 0; --i) {
+        log->truncate(model::offset{i}).get();
+        ASSERT_EQ(model::offset{i}, log->next_offset());
+        ASSERT_EQ(1, log->segment_count());
+    }
+}
+
+TEST_F(ActiveSegmentTest, TestSuffixTruncateExactlyActiveSegment) {
+    auto* log = make_log(128_MiB, tristate<std::chrono::milliseconds>{});
+    auto first_batches = write_random_batches(log, 10).get();
+    log->roll_for_tests().get();
+    auto second_batches
+      = write_random_batches(log, 10, log->next_offset()).get();
+    ASSERT_EQ(2, log->segment_count());
+
+    // Truncate right at the start of the new active segment.
+    const auto active_seg_start = second_batches.begin()->base_offset();
+    log->truncate(active_seg_start).get();
+    ASSERT_EQ(active_seg_start, log->next_offset());
+    ASSERT_EQ(2, log->segment_count());
+}
+
+TEST_F(ActiveSegmentTest, TestSuffixTruncateGapBelowActiveSegment) {
+    auto* log = make_log(128_MiB, tristate<std::chrono::milliseconds>{});
+    auto first_batches = write_random_batches(log, 10).get();
+    log->roll_for_tests().get();
+    auto second_batches
+      = write_random_batches(log, 10, log->next_offset()).get();
+    ASSERT_EQ(2, log->segment_count());
+
+    // Truncate right below the start of the new active segment.
+    const auto active_seg_start = second_batches.begin()->base_offset();
+    const auto new_next_offset = model::prev_offset(active_seg_start);
+    log->truncate(new_next_offset).get();
+    ASSERT_EQ(new_next_offset, log->next_offset());
+    ASSERT_EQ(2, log->segment_count());
+}
+
+TEST_F(ActiveSegmentTest, TestSuffixTruncateAtSegmentBoundary) {
+    auto* log = make_log(128_MiB, tristate<std::chrono::milliseconds>{});
+    auto first_batches = write_random_batches(log, 10).get();
+    log->roll_for_tests().get();
+    auto second_batches
+      = write_random_batches(log, 10, log->next_offset()).get();
+    log->roll_for_tests().get();
+    auto third_batches
+      = write_random_batches(log, 10, log->next_offset()).get();
+    ASSERT_EQ(3, log->segment_count());
+
+    // Truncate exactly to the start of the second segment.
+    const auto second_seg_start = second_batches.begin()->base_offset();
+    log->truncate(second_seg_start).get();
+    ASSERT_EQ(2, log->segment_count());
+    ASSERT_EQ(second_seg_start, log->next_offset());
+}
+
+TEST_F(ActiveSegmentTest, TestSuffixTruncateAfterSegmentBoundary) {
+    auto* log = make_log(128_MiB, tristate<std::chrono::milliseconds>{});
+    auto first_batches = write_random_batches(log, 10).get();
+    log->roll_for_tests().get();
+    auto second_batches
+      = write_random_batches(log, 10, log->next_offset()).get();
+    log->roll_for_tests().get();
+    auto third_batches
+      = write_random_batches(log, 10, log->next_offset()).get();
+    ASSERT_EQ(3, log->segment_count());
+
+    // Truncate to just after the start of the second segment.
+    const auto second_seg_start = second_batches.begin()->base_offset();
+    const auto new_next_offset = model::next_offset(second_seg_start);
+    log->truncate(new_next_offset).get();
+    ASSERT_EQ(3, log->segment_count());
+    ASSERT_EQ(new_next_offset, log->next_offset());
 }

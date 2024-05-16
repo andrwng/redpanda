@@ -11,8 +11,10 @@
 #include "container/fragmented_vector.h"
 #include "model/offset_interval.h"
 #include "model/record.h"
+#include "storage/mvlog/entry.h"
 #include "storage/mvlog/file.h"
 #include "storage/mvlog/segment_identifier.h"
+#include "storage/mvlog/version_id.h"
 #include "storage/ntp_config.h"
 #include "utils/mutex.h"
 
@@ -20,6 +22,10 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/io_priority_class.hh>
 #include <seastar/core/lowres_clock.hh>
+
+namespace storage {
+struct truncate_config;
+} // namespace storage
 
 namespace storage::experimental::mvlog {
 
@@ -80,6 +86,10 @@ public:
     // Closes the segments in the log.
     ss::future<> close();
 
+    // Truncates the suffix of the log so that the next offset is the offset
+    // specified in the config.
+    ss::future<> truncate(model::offset new_next_offset);
+
     // Appends the record batch to the active segment, creating a new one if it
     // doesn't exist or if past the configured segment size. Upon returning,
     // the record batch will be visible to new readers, though may not be
@@ -97,6 +107,7 @@ public:
 
     // Returns whether or not the log has an active segment.
     bool has_active_segment() const;
+    model::offset next_offset() const;
 
     // Rolls the active segment.
     ss::future<> roll_for_tests();
@@ -109,6 +120,7 @@ private:
 
     // Returns the point in time after which a segment should be rolled.
     std::optional<ss::lowres_clock::time_point> compute_roll_deadline() const;
+    segments_t::iterator find_seg_contains_or_greater(model::offset);
 
     // Rolls the active segment, leaving the log without an active segment.
     // Must be called while the active segment lock is held and while there is
@@ -120,6 +132,25 @@ private:
     // no active segment.
     ss::future<> create_unlocked(model::offset base);
 
+    ss::future<> truncate_active_seg_unlocked(
+      model::offset new_next_offset, version_id new_version_id);
+
+    ss::future<segment_truncation> build_segment_truncation(
+      segment_id, readable_segment&, file&, model::offset truncate_offset);
+
+    ss::future<segment_truncation>
+    build_segment_truncation(model::offset o, active_segment* s) {
+        co_return co_await build_segment_truncation(
+          s->id, *s->readable_seg, *s->segment_file, o);
+    }
+    ss::future<segment_truncation>
+    build_segment_truncation(model::offset o, readonly_segment* s) {
+        co_return co_await build_segment_truncation(
+          s->id, *s->readable_seg, *s->segment_file, o);
+    }
+    static segment_truncation build_full_segment_truncation(readonly_segment*);
+    static segment_truncation build_full_segment_truncation(active_segment*);
+
     // NTP config with which to get segment properties.
     const ntp_config ntp_cfg_;
 
@@ -128,6 +159,10 @@ private:
 
     // The id of the next segment to create.
     segment_id next_segment_id_{0};
+
+    // The current version id. New versions are created during suffix
+    // truncations, when we have to undo some appends.
+    version_id cur_version_id_{0};
 
     // Lock protecting mutations that involve the active segment.
     mutex active_segment_lock_{"active_segment_lock"};
@@ -140,6 +175,9 @@ private:
     // The segments with offsets lower than that in the active segment.
     // Ordered by offsets.
     segments_t segs_;
+
+    // Segments that need to be removed.
+    chunked_vector<std::unique_ptr<readonly_segment>> segs_pending_removal_;
 };
 
 } // namespace storage::experimental::mvlog
