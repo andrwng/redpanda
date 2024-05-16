@@ -11,6 +11,7 @@
 #include "container/fragmented_vector.h"
 #include "model/offset_interval.h"
 #include "model/record.h"
+#include "model/record_batch_reader.h"
 #include "storage/mvlog/entry.h"
 #include "storage/mvlog/file.h"
 #include "storage/mvlog/segment_identifier.h"
@@ -24,6 +25,7 @@
 #include <seastar/core/lowres_clock.hh>
 
 namespace storage {
+struct log_reader_config;
 struct truncate_config;
 } // namespace storage
 
@@ -101,6 +103,8 @@ public:
     // segment, e.g. as specified by the segment.ms property. If so, rolls the
     // segment, leaving the log without an active segment.
     ss::future<> apply_segment_ms();
+
+    model::record_batch_reader make_reader(const log_reader_config&);
 
     // Returns the total of segments in the log.
     size_t segment_count() const;

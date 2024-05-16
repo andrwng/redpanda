@@ -14,11 +14,15 @@
 #include "model/offset_interval.h"
 #include "storage/mvlog/entry.h"
 #include "storage/mvlog/file.h"
+#include "storage/mvlog/log_reader.h"
 #include "storage/mvlog/logger.h"
 #include "storage/mvlog/readable_segment.h"
 #include "storage/mvlog/segment_appender.h"
 #include "storage/mvlog/segment_reader.h"
+#include "storage/mvlog/version_id.h"
+#include "storage/types.h"
 
+#include <seastar/core/chunked_fifo.hh>
 #include <seastar/core/circular_buffer.hh>
 #include <seastar/core/io_priority_class.hh>
 #include <seastar/core/lowres_clock.hh>
@@ -311,6 +315,38 @@ ss::future<> versioned_log::append(model::record_batch b) {
     auto next = model::next_offset(b.last_offset());
     co_await active_seg_->appender->append(std::move(b));
     active_seg_->next_offset = next;
+}
+
+model::record_batch_reader
+versioned_log::make_reader(const log_reader_config& cfg) {
+    auto read_start_offset = cfg.start_offset;
+    auto read_max_offset = cfg.max_offset;
+    ss::chunked_fifo<std::unique_ptr<segment_reader>> seg_readers;
+    for (const auto& seg : segs_) {
+        if (seg->offsets.max() < read_start_offset) {
+            // The segment is entirely below the start.
+            continue;
+        }
+        if (seg->offsets.min() > read_max_offset) {
+            // The segment is entirely above the end of the read range.
+            break;
+        }
+        seg_readers.emplace_back(seg->readable_seg->make_reader(version_id{0}));
+    }
+    // Add the active segment at the end if it falls in the read range.
+    if (active_seg_ && active_seg_->base_offset != active_seg_->next_offset) {
+        auto seg_range = model::bounded_offset_interval::unchecked(
+          active_seg_->base_offset,
+          model::prev_offset(active_seg_->next_offset));
+        auto reader_range = model::bounded_offset_interval::unchecked(
+          cfg.start_offset, cfg.max_offset);
+        if (seg_range.overlaps(reader_range)) {
+            seg_readers.emplace_back(
+              active_seg_->readable_seg->make_reader(version_id{0}));
+        }
+    }
+    return model::make_record_batch_reader<log_reader>(
+      cfg, version_id{0}, std::move(seg_readers));
 }
 
 size_t versioned_log::segment_count() const {
