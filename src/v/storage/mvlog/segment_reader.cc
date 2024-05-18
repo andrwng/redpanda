@@ -10,6 +10,7 @@
 #include "storage/mvlog/segment_reader.h"
 
 #include "base/vlog.h"
+#include "storage/mvlog/entry.h"
 #include "storage/mvlog/entry_stream.h"
 #include "storage/mvlog/entry_stream_utils.h"
 #include "storage/mvlog/file.h"
@@ -85,12 +86,26 @@ segment_reader::find_filepos(model::offset target_offset) {
                 break;
             }
             const auto body_size = entry_opt->body.size_bytes();
-            auto entry_body = serde::from_iobuf<record_batch_entry_body>(
-              std::move(entry_opt->body));
-            auto batch_header = storage::batch_header_from_disk_iobuf(
-              std::move(entry_body.record_batch_header));
-            if (batch_header.base_offset >= target_offset) {
-                co_return cur_pos;
+            switch (entry_opt->hdr.type) {
+            case entry_type::record_batch: {
+                auto entry_body = serde::from_iobuf<record_batch_entry_body>(
+                  std::move(entry_opt->body));
+                auto batch_header = storage::batch_header_from_disk_iobuf(
+                  std::move(entry_body.record_batch_header));
+                if (batch_header.base_offset >= target_offset) {
+                    co_return cur_pos;
+                }
+            }
+            break;
+            case entry_type::truncation: {
+                auto entry_body = serde::from_iobuf<truncation_entry_body>(
+                  std::move(entry_opt->body));
+                auto truncation_offset = entry_body.base_offset;
+                if (truncation_offset >= target_offset) {
+                    co_return cur_pos;
+                }
+            }
+            break;
             }
             cur_pos += body_size + packed_entry_header_size;
         }
