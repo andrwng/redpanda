@@ -98,6 +98,9 @@ public:
     // Returns whether or not the log has an active segment.
     bool has_active_segment() const;
 
+    // Rolls the active segment.
+    ss::future<> roll_for_tests();
+
 private:
     using segments_t = ss::circular_buffer<std::unique_ptr<readonly_segment>>;
 

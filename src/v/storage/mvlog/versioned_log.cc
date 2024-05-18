@@ -50,6 +50,17 @@ readonly_segment::readonly_segment(std::unique_ptr<active_segment> active_seg)
 versioned_log::versioned_log(storage::ntp_config cfg)
   : ntp_cfg_(std::move(cfg)) {}
 
+ss::future<> versioned_log::roll_for_tests() {
+    auto lock = active_segment_lock_.try_get_units();
+    if (!lock.has_value()) {
+        lock = co_await active_segment_lock_.get_units();
+    }
+    if (active_seg_ == nullptr) {
+        co_return;
+    }
+    co_await roll_unlocked();
+}
+
 ss::future<> versioned_log::roll_unlocked() {
     vassert(
       !active_segment_lock_.ready(),
