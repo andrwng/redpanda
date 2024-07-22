@@ -1,4 +1,22 @@
+load("@rules_python//python:defs.bzl", "py_binary")
 load("//bazel:test.bzl", "redpanda_cc_gtest", "redpanda_test_cc_library")
+
+py_binary(
+    name = "manifest_generator",
+    srcs = ["gen_test_iceberg_manifest.py"],
+    main = "gen_test_iceberg_manifest.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@python_deps//pyiceberg",
+    ],
+)
+
+genrule(
+    name = "nested_manifest_avro",
+    outs = ["nested_manifest.avro"],
+    cmd = "$(location :manifest_generator) -o $@ -n 100",
+    tools = [":manifest_generator"],
+)
 
 redpanda_test_cc_library(
     name = "test_schemas",
@@ -50,6 +68,7 @@ redpanda_cc_gtest(
         "manifest_serialization_test.cc",
     ],
     deps = [
+        ":nested_manifest_avro",
         ":test_schemas",
         "//src/v/base",
         "//src/v/bytes:iobuf",
