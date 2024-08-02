@@ -32,6 +32,7 @@ v_cc_library(
     datatypes_json.cc
     json_utils.cc
     manifest_avro.cc
+    manifest_entry_avro.cc
     partition.cc
     schema_json.cc
   DEPS

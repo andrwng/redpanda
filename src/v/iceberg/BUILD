@@ -79,6 +79,17 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "manifest_entry_avro",
+    hdrs = [
+        "manifest_entry_avro.h",
+    ],
+    include_prefix = "iceberg",
+    deps [
+        "@avro",
+        "@fmt",
+    ],
+
+redpanda_cc_library(
     name = "manifest",
     hdrs = [
         "manifest.h",
