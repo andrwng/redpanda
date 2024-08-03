@@ -36,6 +36,7 @@ v_cc_library(
     schema.cc
     schema_json.cc
     transform.cc
+    values.cc
   DEPS
     Avro::avro
     v::bytes
