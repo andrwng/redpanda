@@ -62,6 +62,40 @@ bool operator==(const nested_field& lhs, const nested_field& rhs) {
            && lhs.name == rhs.name && lhs.type == rhs.type;
 }
 
+primitive_type make_copy(const primitive_type& type) { return type; }
+
+field_type make_copy(const field_type& type) {
+    if (std::holds_alternative<primitive_type>(type)) {
+        const auto& as_primitive = std::get<primitive_type>(type);
+        return make_copy(as_primitive);
+    } else if (std::holds_alternative<struct_type>(type)) {
+        const auto& as_struct = std::get<struct_type>(type);
+        struct_type ret;
+        for (const auto& field_ptr : as_struct.fields) {
+            ret.fields.emplace_back(field_ptr ? field_ptr->copy() : nullptr);
+        }
+        return ret;
+    } else if (std::holds_alternative<list_type>(type)) {
+        const auto& as_list = std::get<list_type>(type);
+        list_type ret;
+        if (as_list.element_field) {
+            ret.element_field = as_list.element_field->copy();
+        }
+        return ret;
+    } else if (std::holds_alternative<map_type>(type)) {
+        const auto& as_map = std::get<map_type>(type);
+        map_type ret;
+        if (as_map.key_field) {
+            ret.key_field = as_map.key_field->copy();
+        }
+        if (as_map.value_field) {
+            ret.value_field = as_map.value_field->copy();
+        }
+        return ret;
+    }
+    throw std::invalid_argument(fmt::format("Unhandled type: {}", type));
+}
+
 std::ostream& operator<<(std::ostream& o, const boolean_type&) {
     o << "boolean";
     return o;
@@ -259,5 +293,9 @@ map_type map_type::create(
         val_id, "value", val_req, std::move(val_type)),
     };
 }
+
+nested_field_ptr nested_field::copy() const {
+    return nested_field::create(id, name, required, make_copy(type));
+};
 
 } // namespace iceberg
