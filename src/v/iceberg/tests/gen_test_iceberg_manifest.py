@@ -12,8 +12,10 @@
 import argparse
 from pyiceberg.io.fsspec import FsspecFileIO
 from pyiceberg.manifest import write_manifest, DataFile, DataFileContent, ManifestEntry
-from pyiceberg.partitioning import PartitionSpec
+from pyiceberg.partitioning import PartitionSpec, PartitionField
 from pyiceberg.schema import Schema
+from pyiceberg.transforms import IdentityTransform
+from pyiceberg.typedef import Record
 from pyiceberg.types import StringType, ListType, IntegerType, StructType, BooleanType, NestedField, MapType, FloatType
 
 # TODO: support some other schemas.
@@ -86,7 +88,7 @@ def make_manifest_entries(num_entries: int) -> list[ManifestEntry]:
             content=DataFileContent.DATA,
             file_path=f"data/path/file-{i}.parquet",
             file_format='PARQUET',
-            partition={},
+            partition=Record(fookey="foovalue", barkey=1337),
             record_count=i,
             file_size_in_bytes=i,
             column_sizes={},
@@ -111,7 +113,10 @@ def make_manifest_entries(num_entries: int) -> list[ManifestEntry]:
 
 def main(args):
     # TODO: add once we have support serialization of partition specs.
-    spec = PartitionSpec(fields=[])
+    spec = PartitionSpec(fields=[
+        PartitionField(source_id=1, field_id=1000, transform=IdentityTransform(), name="fookey"),
+        PartitionField(source_id=2, field_id=1001, transform=IdentityTransform(), name="barkey"),
+    ])
 
     file_io = FsspecFileIO(properties={})
     output_file = file_io.new_output(args.out_file)
