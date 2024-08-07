@@ -10,9 +10,11 @@
 
 #include "iceberg/datatypes.h"
 #include "iceberg/transform.h"
+#include "iceberg/values.h"
 
 namespace iceberg {
 
 field_type get_result_type(const field_type&, const transform&);
+value_ptr apply_transform(const value&, const transform&);
 
 } // namespace iceberg

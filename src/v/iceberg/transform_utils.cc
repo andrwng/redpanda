@@ -44,4 +44,25 @@ get_result_type(const field_type& source_type, const transform& transform) {
     return std::visit(transform_result_type_visitor{source_type}, transform);
 }
 
+struct transform_applying_visitor {
+    explicit transform_applying_visitor(const value& source_val)
+      : source_val_(source_val) {}
+    const value& source_val_;
+
+    value_ptr operator()(const day_transform&) {
+        // TODO: implement me! And everything else.
+        int_value v{0};
+        return std::make_unique<value>(v);
+    }
+
+    template<typename T>
+    value_ptr operator()(const T&) {
+        throw std::invalid_argument("Not supported");
+    }
+};
+
+value_ptr apply_transform(const value& source_val, const transform& transform) {
+    return std::visit(transform_applying_visitor{source_val}, transform);
+}
+
 } // namespace iceberg
