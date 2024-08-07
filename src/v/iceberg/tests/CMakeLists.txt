@@ -13,6 +13,7 @@ rp_test(
     manifest_entry_avro_test.cc
     manifest_serialization_test.cc
     partition_test.cc
+    schema_avro_test.cc
     schema_json_test.cc
     test_schemas.cc
     values_test.cc
