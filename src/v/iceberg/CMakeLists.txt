@@ -33,6 +33,7 @@ v_cc_library(
     json_utils.cc
     manifest_avro.cc
     manifest_entry_avro.cc
+    partition_utils.cc
     schema.cc
     schema_json.cc
     schema_utils.cc
