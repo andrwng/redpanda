@@ -35,6 +35,7 @@ v_cc_library(
     manifest_entry_avro.cc
     schema.cc
     schema_json.cc
+    schema_utils.cc
     struct_accessor.cc
     transform.cc
     values.cc
