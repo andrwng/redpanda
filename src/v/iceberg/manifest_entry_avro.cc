@@ -8,6 +8,9 @@
 // by the Apache License, Version 2.0
 #include "iceberg/manifest_entry_avro.h"
 
+#include "iceberg/schema.h"
+#include "iceberg/schema_avro.h"
+
 #include <avro/CustomAttributes.hh>
 #include <avro/LogicalType.hh>
 #include <avro/Schema.hh>
@@ -53,18 +56,17 @@ avro::Schema kv_schema(
     return schema;
 }
 
-avro::Schema partition_schema() {
-    // TODO: pass in a tuple.
-    avro::RecordSchema schema("r102");
-    return schema;
+avro::Schema partition_schema(const struct_type& partition_type) {
+    return schema_as_avro(partition_type, "r102");
 }
 
-avro::Schema data_file_schema() {
+avro::Schema data_file_schema(const struct_type& partition_type) {
     avro::RecordSchema schema("r2");
     schema.addField("conent", avro::IntSchema(), field_attrs(134));
     schema.addField("file_path", avro::IntSchema(), field_attrs(100));
     schema.addField("file_format", avro::StringSchema(), field_attrs(101));
-    schema.addField("partition", partition_schema(), field_attrs(102));
+    schema.addField(
+      "partition", partition_schema(partition_type), field_attrs(102));
     schema.addField("record_count", avro::LongSchema(), field_attrs(103));
     schema.addField("file_size_in_bytes", avro::LongSchema(), field_attrs(104));
     schema.addField(
@@ -114,7 +116,7 @@ avro::Schema data_file_schema() {
     return schema;
 }
 
-avro::Schema manifest_entry_schema() {
+avro::Schema manifest_entry_schema(const struct_type& partition_type) {
     avro::RecordSchema schema("manifest_entry");
     schema.addField("status", avro::IntSchema(), field_attrs(0));
     schema.addField(
@@ -123,7 +125,8 @@ avro::Schema manifest_entry_schema() {
       "sequence_number", optional_of(avro::LongSchema()), field_attrs(3));
     schema.addField(
       "file_sequence_number", optional_of(avro::LongSchema()), field_attrs(4));
-    schema.addField("data_file", data_file_schema(), field_attrs(2));
+    schema.addField(
+      "data_file", data_file_schema(partition_type), field_attrs(2));
     return schema;
 }
 

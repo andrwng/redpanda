@@ -8,10 +8,12 @@
 // by the Apache License, Version 2.0
 #pragma once
 
+#include "iceberg/datatypes.h"
+
 #include <avro/Schema.hh>
 
 namespace iceberg {
 
-avro::Schema manifest_entry_schema();
+avro::Schema manifest_entry_schema(const struct_type& partition_type);
 
 } // namespace iceberg
