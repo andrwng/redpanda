@@ -18,10 +18,16 @@ namespace iceberg {
 
 struct schema {
     using id_t = named_type<int32_t, struct schema_id_tag>;
+    using ids_types_map_t
+      = chunked_hash_map<nested_field::id_t, const field_type*>;
+
     struct_type schema_struct;
     id_t schema_id;
     chunked_hash_set<nested_field::id_t> identifier_field_ids;
     friend bool operator==(const schema& lhs, const schema& rhs) = default;
+
+    // Returns a mapping from field id to the field type.
+    ids_types_map_t ids_to_types() const;
 };
 
 } // namespace iceberg

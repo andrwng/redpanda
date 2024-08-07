@@ -34,6 +34,7 @@ v_cc_library(
     manifest_avro.cc
     manifest_entry_avro.cc
     partition.cc
+    schema.cc
     schema_json.cc
   DEPS
     Avro::avro
