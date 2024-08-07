@@ -38,6 +38,7 @@ v_cc_library(
     schema_utils.cc
     struct_accessor.cc
     transform.cc
+    transform_utils.cc
     values.cc
   DEPS
     Avro::avro
