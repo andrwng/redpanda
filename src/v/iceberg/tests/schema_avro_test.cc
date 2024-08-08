@@ -166,8 +166,8 @@ TEST(SchemaAvroSerialization, TestStruct) {
       nested_field::create(1, "foo", field_required::yes, int_type()));
     subtype.fields.emplace_back(
       nested_field::create(2, "bar", field_required::no, int_type()));
-    type.fields.emplace_back(
-      nested_field::create(3, "substruct", field_required::no, std::move(subtype)));
+    type.fields.emplace_back(nested_field::create(
+      3, "substruct", field_required::no, std::move(subtype)));
     schema s{
       .schema_struct = std::move(type),
       .schema_id = schema::id_t{0},
