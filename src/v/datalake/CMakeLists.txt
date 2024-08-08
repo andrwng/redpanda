@@ -9,8 +9,9 @@ v_cc_library(
     protobuf_to_arrow_converter.cc
     proto_to_arrow_scalar.cc
     proto_to_arrow_struct.cc
+    proto_to_iceberg_converter.cc
   DEPS
-    v::storage
+    v::iceberg
     Seastar::seastar
     Arrow::arrow_shared
     Parquet::parquet_shared

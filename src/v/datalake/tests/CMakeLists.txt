@@ -7,7 +7,7 @@ rp_test(
     LIBRARIES
       v::gtest_main
       v::datalake
+      v::storage
     LABELS datalake
     ARGS "-- -c 1"
   )
-  
