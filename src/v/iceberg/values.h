@@ -131,4 +131,18 @@ struct map_value {
 };
 bool operator==(const map_value&, const map_value&);
 
+size_t value_hash(const struct_value&);
+size_t value_hash(const value&);
+
 } // namespace iceberg
+
+namespace std {
+
+template<>
+struct hash<iceberg::value> {
+    size_t operator()(const iceberg::value& v) const {
+        return iceberg::value_hash(v);
+    }
+};
+
+} // namespace std

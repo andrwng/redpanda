@@ -8,7 +8,10 @@
 // by the Apache License, Version 2.0
 #include "iceberg/values.h"
 
+#include "bytes/hash.h"
 #include "iceberg/datatypes.h"
+
+#include <boost/container_hash/hash_fwd.hpp>
 
 namespace iceberg {
 
@@ -102,5 +105,106 @@ bool operator==(const map_value& lhs, const map_value& rhs) {
     }
     return true;
 }
+
+namespace {
+
+struct primitive_hashing_visitor {
+    size_t operator()(const boolean_value& v) const {
+        return std::hash<bool>()(v.val);
+    }
+    size_t operator()(const int_value& v) const {
+        return std::hash<int>()(v.val);
+    }
+    size_t operator()(const long_value& v) const {
+        return std::hash<int64_t>()(v.val);
+    }
+    size_t operator()(const float_value& v) const {
+        return std::hash<float>()(v.val);
+    }
+    size_t operator()(const double_value& v) const {
+        return std::hash<double>()(v.val);
+    }
+    size_t operator()(const date_value& v) const {
+        return std::hash<int32_t>()(v.val);
+    }
+    size_t operator()(const time_value& v) const {
+        return std::hash<int64_t>()(v.val);
+    }
+    size_t operator()(const timestamp_value& v) const {
+        return std::hash<int64_t>()(v.val);
+    }
+    size_t operator()(const timestamptz_value& v) const {
+        return std::hash<int64_t>()(v.val);
+    }
+    size_t operator()(const string_value& v) const {
+        return std::hash<iobuf>()(v.val);
+    }
+    size_t operator()(const uuid_value& v) const {
+        return absl::Hash<uuid_t>()(v.val);
+    }
+    size_t operator()(const fixed_value& v) const {
+        return std::hash<iobuf>()(v.val);
+    }
+    size_t operator()(const binary_value& v) const {
+        return std::hash<iobuf>()(v.val);
+    }
+    size_t operator()(const decimal_value& v) const {
+        return absl::Hash<absl::int128>()(v.val);
+    }
+};
+
+struct hashing_visitor {
+    size_t operator()(const primitive_value& v) const {
+        return std::visit(primitive_hashing_visitor{}, v);
+    }
+
+    size_t operator()(const struct_value& v) const {
+        size_t h = 0;
+        for (const auto& f : v.fields) {
+            if (!f) {
+                continue;
+            }
+            boost::hash_combine(h, std::hash<value>()(*f));
+        }
+        return h;
+    }
+    size_t operator()(const list_value& v) const {
+        size_t h = 0;
+        for (const auto& e : v.elements) {
+            if (!e) {
+                continue;
+            }
+            boost::hash_combine(h, std::hash<value>()(*e));
+        }
+        return h;
+    }
+    size_t operator()(const map_value& v) const {
+        size_t h = 0;
+        for (const auto& kv : v.kvs) {
+            if (kv.key) {
+                boost::hash_combine(h, std::hash<value>()(*kv.key));
+            }
+            if (kv.val) {
+                boost::hash_combine(h, std::hash<value>()(*kv.val));
+            }
+        }
+        return h;
+    }
+};
+
+} // namespace
+
+size_t value_hash(const struct_value& v) {
+    size_t h = 0;
+    for (const auto& f : v.fields) {
+        if (!f) {
+            continue;
+        }
+        boost::hash_combine(h, std::hash<value>()(*f));
+    }
+    return h;
+}
+
+size_t value_hash(const value& v) { return std::visit(hashing_visitor{}, v); }
 
 } // namespace iceberg
