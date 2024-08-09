@@ -102,7 +102,7 @@ TEST(SchemaAvroSerialization, TestListFields) {
       .schema_struct = std::move(type),
       .schema_id = schema::id_t{0},
       .identifier_field_ids = {}};
-    auto avro_root = schema_as_avro(s.schema_struct0, "test_schema");
+    auto avro_root = schema_as_avro(s.schema_struct, "test_schema");
     auto avro_schema = avro::ValidSchema(avro_root);
     const auto expected_str = R"({
     "type": "record",
@@ -172,7 +172,7 @@ TEST(SchemaAvroSerialization, TestStruct) {
       .schema_struct = std::move(type),
       .schema_id = schema::id_t{0},
       .identifier_field_ids = {}};
-    auto avro_root = schema_as_avro(s.schema_struct0, "test_schema");
+    auto avro_root = schema_as_avro(s.schema_struct, "test_schema");
     auto avro_schema = avro::ValidSchema(avro_root);
     const auto expected_str = R"({
     "type": "record",
@@ -236,7 +236,7 @@ TEST(SchemaAvroSerialization, TestMap) {
       .schema_struct = std::move(type),
       .schema_id = schema::id_t{0},
       .identifier_field_ids = {}};
-    auto avro_root = schema_as_avro(s.schema_struct0, "test_schema");
+    auto avro_root = schema_as_avro(s.schema_struct, "test_schema");
     auto avro_schema = avro::ValidSchema(avro_root);
     const auto expected_str = R"({
     "type": "record",
@@ -314,7 +314,7 @@ TEST(SchemaAvroSerialization, TestNestedSchema) {
       .schema_struct = std::get<struct_type>(test_nested_schema_type()),
       .schema_id = schema::id_t{0},
       .identifier_field_ids = {}};
-    auto avro_node = schema_as_avro(s.schema_struct0, "test_schema");
+    auto avro_node = schema_as_avro(s.schema_struct, "test_schema");
     ASSERT_EQ(avro_node.type(), avro::Type::AVRO_RECORD);
     const auto& root = avro_node.root();
     ASSERT_EQ(root->leaves(), 7);
