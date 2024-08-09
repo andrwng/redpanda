@@ -95,3 +95,5 @@ TEST(ManifestEntrySchemaTest, TestPartitionFieldValidSchema) {
     ASSERT_TRUE(schema_json.find(expected_partition_field) != ss::sstring::npos)
       << schema_json;
 }
+
+TEST(ManifestEntryAvroTest, TestPartitionFieldManifestEntry) {}

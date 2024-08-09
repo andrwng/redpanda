@@ -15,5 +15,6 @@
 namespace iceberg {
 
 avro::Schema manifest_entry_schema(const struct_type& partition_type);
+struct_type manifest_entry_type(struct_type partition_type);
 
 } // namespace iceberg
