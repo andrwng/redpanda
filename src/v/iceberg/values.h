@@ -134,6 +134,26 @@ bool operator==(const map_value&, const map_value&);
 size_t value_hash(const struct_value&);
 size_t value_hash(const value&);
 
+std::ostream& operator<<(std::ostream&, const boolean_value&);
+std::ostream& operator<<(std::ostream&, const int_value&);
+std::ostream& operator<<(std::ostream&, const long_value&);
+std::ostream& operator<<(std::ostream&, const float_value&);
+std::ostream& operator<<(std::ostream&, const double_value&);
+std::ostream& operator<<(std::ostream&, const date_value&);
+std::ostream& operator<<(std::ostream&, const time_value&);
+std::ostream& operator<<(std::ostream&, const timestamp_value&);
+std::ostream& operator<<(std::ostream&, const timestamptz_value&);
+std::ostream& operator<<(std::ostream&, const string_value&);
+std::ostream& operator<<(std::ostream&, const uuid_value&);
+std::ostream& operator<<(std::ostream&, const fixed_value&);
+std::ostream& operator<<(std::ostream&, const binary_value&);
+std::ostream& operator<<(std::ostream&, const decimal_value&);
+std::ostream& operator<<(std::ostream&, const primitive_value&);
+std::ostream& operator<<(std::ostream&, const struct_value&);
+std::ostream& operator<<(std::ostream&, const list_value&);
+std::ostream& operator<<(std::ostream&, const map_value&);
+std::ostream& operator<<(std::ostream&, const value&);
+
 } // namespace iceberg
 
 namespace std {

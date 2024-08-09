@@ -50,6 +50,7 @@ v_cc_library(
     v::container
     v::json
     v::strings
+    v::utils
 )
 
 add_subdirectory(tests)
