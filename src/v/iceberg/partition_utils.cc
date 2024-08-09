@@ -18,7 +18,7 @@ struct_type create_partition_type(
     const auto ids_to_types = schema.ids_to_types();
     const auto& partition_fields = partition_spec.fields;
     for (const auto& field : partition_fields) {
-        const auto& source_id = field.field_id;
+        const auto& source_id = field.source_id;
         const auto type_iter = ids_to_types.find(source_id);
         if (type_iter == ids_to_types.end()) {
             throw std::invalid_argument(fmt::format(
