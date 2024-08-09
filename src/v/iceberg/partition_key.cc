@@ -36,4 +36,8 @@ partition_key partition_key::create(
     return partition_key{std::move(ret_val)};
 }
 
+bool operator==(const partition_key& lhs, const partition_key& rhs) {
+    return lhs.val == rhs.val;
+}
+
 } // namespace iceberg

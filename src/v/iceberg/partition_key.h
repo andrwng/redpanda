@@ -22,6 +22,7 @@ struct partition_key {
       const struct_accessor::ids_accessor_map_t& accessors,
       const partition_spec& spec);
 };
+bool operator==(const partition_key&, const partition_key&);
 
 } // namespace iceberg
 
