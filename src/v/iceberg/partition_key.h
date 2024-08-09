@@ -24,3 +24,14 @@ struct partition_key {
 };
 
 } // namespace iceberg
+
+namespace std {
+
+template<>
+struct hash<iceberg::partition_key> {
+    size_t operator()(const iceberg::partition_key& k) const {
+        return iceberg::value_hash(k.val);
+    }
+};
+
+} // namespace std
