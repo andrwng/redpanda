@@ -10,6 +10,7 @@ v_cc_library(
     proto_to_arrow_scalar.cc
     proto_to_arrow_struct.cc
     proto_to_iceberg_converter.cc
+    timestamp_partition_constants.cc
   DEPS
     v::iceberg
     Seastar::seastar
