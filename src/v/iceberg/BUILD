@@ -230,6 +230,22 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "transform_utils",
+    srcs = [
+        "transform_utils.cc",
+    ],
+    hdrs = [
+        "transform_utils.h",
+    ],
+    include_prefix = "iceberg",
+    deps = [
+        ":datatypes",
+        ":transform",
+        ":values",
+    ],
+)
+
+redpanda_cc_library(
     name = "values",
     srcs = [
         "values.cc",
