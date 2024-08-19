@@ -65,3 +65,40 @@ TEST(SchemaTest, TestGetTypesNestedSchema) {
     ASSERT_TRUE(std::holds_alternative<string_type>(get_primitive_type(16)));
     ASSERT_TRUE(std::holds_alternative<int_type>(get_primitive_type(17)));
 }
+
+TEST(SchemaTest, TestGetTypesNestedSchemaNoneFilter) {
+    schema s{
+      .schema_struct = std::get<struct_type>(test_nested_schema_type()),
+      .schema_id = schema::id_t{0},
+      .identifier_field_ids = {},
+    };
+    // Filter for a field that doesn't exist.
+    const auto ids_to_types = s.ids_to_types({nested_field::id_t{0}});
+    ASSERT_EQ(0, ids_to_types.size());
+}
+
+TEST(SchemaTest, TestGetTypesNestedSchemaNestedFilter) {
+    schema s{
+      .schema_struct = std::get<struct_type>(test_nested_schema_type()),
+      .schema_id = schema::id_t{0},
+      .identifier_field_ids = {},
+    };
+    // Filter for a couple child fields.
+    const auto ids_to_types = s.ids_to_types(
+      {nested_field::id_t{14}, nested_field::id_t{17}});
+    ASSERT_EQ(2, ids_to_types.size());
+    {
+        auto* type = ids_to_types.at(nested_field::id_t{14});
+        ASSERT_TRUE(type);
+        EXPECT_TRUE(std::holds_alternative<primitive_type>(*type));
+        ASSERT_TRUE(
+          std::holds_alternative<float_type>(std::get<primitive_type>(*type)));
+    }
+    {
+        auto* type = ids_to_types.at(nested_field::id_t{17});
+        ASSERT_TRUE(type);
+        EXPECT_TRUE(std::holds_alternative<primitive_type>(*type));
+        ASSERT_TRUE(
+          std::holds_alternative<int_type>(std::get<primitive_type>(*type)));
+    }
+}

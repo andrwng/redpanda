@@ -36,21 +36,34 @@ public:
 };
 } // namespace
 
-schema::ids_types_map_t schema::ids_to_types() const {
+schema::ids_types_map_t
+schema::ids_to_types(chunked_hash_set<nested_field::id_t> target_ids) const {
     chunked_vector<const nested_field*> to_visit;
     for (const auto& field : schema_struct.fields) {
         to_visit.emplace_back(field.get());
     }
+    bool has_filter = !target_ids.empty();
     schema::ids_types_map_t ret;
     while (!to_visit.empty()) {
+        if (has_filter && target_ids.empty()) {
+            // We've filtered everything.
+            break;
+        }
         auto* field = to_visit.back();
         if (!field) {
-            // E.g. empty value field.
             continue;
         }
         const auto& type = field->type;
         to_visit.pop_back();
-        ret.emplace(field->id, &type);
+        if (has_filter) {
+            const auto iter = target_ids.find(field->id);
+            if (iter != target_ids.end()) {
+                target_ids.erase(iter);
+                ret.emplace(field->id, &type);
+            }
+        } else {
+            ret.emplace(field->id, &type);
+        }
         std::visit(nested_field_collecting_visitor{to_visit}, type);
     }
     return ret;

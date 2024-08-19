@@ -24,8 +24,11 @@ struct schema {
     chunked_hash_set<nested_field::id_t> identifier_field_ids;
     friend bool operator==(const schema& lhs, const schema& rhs) = default;
 
-    // Returns a mapping from field id to the field type.
-    ids_types_map_t ids_to_types() const;
+    // Returns a mapping from field id to the field type. If the given set of
+    // ids is non-empty, returns just the types of the given ids. Otherwise,
+    // returns types of all ids in the schema.
+    ids_types_map_t
+      ids_to_types(chunked_hash_set<nested_field::id_t> = {}) const;
 };
 
 } // namespace iceberg
