@@ -24,19 +24,11 @@ struct transform_result_type_visitor {
     const field_type& source_type_;
 
     field_type operator()(const identity_transform&) {
-        if (std::holds_alternative<primitive_type>(source_type_)) {
-            return std::get<primitive_type>(source_type_);
-        }
-        // TODO: requires a field copy method.
-        throw std::invalid_argument("Identity transform not supported");
+        return make_copy(source_type_);
     }
     field_type operator()(const bucket_transform&) { return int_type(); }
     field_type operator()(const truncate_transform&) {
-        if (std::holds_alternative<primitive_type>(source_type_)) {
-            return std::get<primitive_type>(source_type_);
-        }
-        // TODO: requires a field copy method.
-        throw std::invalid_argument("Truncate transform not supported");
+        return make_copy(source_type_);
     }
     field_type operator()(const year_transform&) { return int_type(); }
     field_type operator()(const month_transform&) { return int_type(); }
