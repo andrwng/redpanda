@@ -51,7 +51,12 @@ public:
 
     const std::vector<pandaproxy::schema_registry::subject_schema>& get_all();
 
+    void set_inject_failures(bool inject) { _inject_failures = inject; }
+
 private:
+    void maybe_throw_injected_failure() const;
+
+    bool _inject_failures{false};
     mutable fake_store _store;
 };
 } // namespace schema
