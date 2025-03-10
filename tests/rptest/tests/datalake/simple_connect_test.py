@@ -59,10 +59,10 @@ class RedpandaConnectIcebergTest(RedpandaTest, DataMigrationTestMixin):
                                    cloud_storage_enable_remote_read=False,
                                    cloud_storage_enable_remote_write=False),
             extra_rp_conf={
-                "iceberg_enabled":
-                True,
+                "iceberg_enabled": True,
                 "iceberg_catalog_commit_interval_ms":
                 self.FAST_COMMIT_INTVL_S * 1000,
+                "iceberg_target_lag_ms": self.FAST_COMMIT_INTVL_S * 1000,
             },
             schema_registry_config=SchemaRegistryConfig())
         self.dl = DatalakeServices(
