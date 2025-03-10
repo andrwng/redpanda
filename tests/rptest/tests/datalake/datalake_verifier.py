@@ -11,6 +11,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import random
 import threading
+import time
 from time import sleep
 from typing import List, Optional
 from rptest.clients.rpk import RpkPartition, RpkTool
@@ -357,7 +358,8 @@ class DatalakeVerifier():
             self._last_checkpoint = self._max_queried_offsets.copy()
         return progress
 
-    def wait(self, progress_timeout_sec=30):
+    def wait(self, progress_timeout_sec=30, total_timeout=None):
+        start_time = time.time()
         try:
             while not self._all_offsets_translated():
                 wait_until(
@@ -367,6 +369,11 @@ class DatalakeVerifier():
                     err_msg=
                     f"Error waiting for the query to make progress for topic {self.topic}"
                 )
+                if total_timeout is not None:
+                    deadline = start_time + total_timeout
+                    if time.time() > deadline:
+                        raise TimeoutError(
+                            "Timeout waiting for progress to complete")
                 assert len(
                     self._errors
                 ) == 0, f"Topic {self.topic} validation errors: {self._errors}"
@@ -404,7 +411,9 @@ class DatalakeVerifier():
     def oneshot(redpanda: RedpandaService,
                 topic: str,
                 query_engine: QueryEngineBase,
-                progress_timeout_sec=30):
+                progress_timeout_sec=30,
+                total_timeout=None):
         verifier = DatalakeVerifier(redpanda, topic, query_engine)
         verifier.start()
-        verifier.wait(progress_timeout_sec=progress_timeout_sec)
+        verifier.wait(progress_timeout_sec=progress_timeout_sec,
+                      total_timeout=total_timeout)
