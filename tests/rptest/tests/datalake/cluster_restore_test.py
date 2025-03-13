@@ -276,6 +276,9 @@ class DatalakeClusterRestoreTest(RedpandaTest):
         manifest = bucket_view.get_partition_manifest(ntp)
         last_offset = BucketView.kafka_last_offset(manifest)
         if last_offset is None:
+            if schemas_hwm == 0:
+                # Expecting an empty manfest.
+                return True
             return False
         return last_offset == schemas_hwm - 1
 
@@ -411,6 +414,14 @@ class DatalakeClusterRestoreTest(RedpandaTest):
                               redpanda=self.redpanda,
                               include_query_engines=[QueryEngineType.SPARK],
                               catalog_type=catalog_type) as dl:
+            # Wait to upload empty schemas partition manifest so we don't
+            # upload any additional manifests and end up restoring schemas.
+            rpk: RpkTool = RpkTool(self.redpanda)
+            rpk.create_topic("_schemas", partitions=1)
+            wait_until(self.has_uploaded_schemas,
+                       timeout_sec=60,
+                       backoff_sec=1,
+                       err_msg="Timed out waiting for schemas upload")
             all_topics, all_streams = self.start_all_topic_streams(dl)
             for t in all_topics:
                 dl.wait_for_translation_until_offset(t, 50)
@@ -497,6 +508,14 @@ class DatalakeClusterRestoreTest(RedpandaTest):
                               redpanda=self.redpanda,
                               include_query_engines=[QueryEngineType.SPARK],
                               catalog_type=catalog_type) as dl:
+            # Wait to upload empty schemas partition manifest so we don't
+            # upload any additional manifests and end up restoring schemas.
+            rpk: RpkTool = RpkTool(self.redpanda)
+            rpk.create_topic("_schemas", partitions=1)
+            wait_until(self.has_uploaded_schemas,
+                       timeout_sec=60,
+                       backoff_sec=1,
+                       err_msg="Timed out waiting for schemas upload")
             all_topics, all_streams = self.start_all_topic_streams(dl)
             for t in all_topics:
                 dl.wait_for_translation_until_offset(t, 50)
