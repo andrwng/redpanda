@@ -45,6 +45,25 @@ coordinator::errc convert_stm_errc(coordinator_stm::errc e) {
         return coordinator::errc::timedout;
     }
 }
+
+// Sleeps for the given amount of time, catching any abort exceptions and
+// logging it. Returns shutting_down if there is an exception.
+ss::future<checked<std::nullopt_t, coordinator::errc>> sleep_for(
+  std::chrono::milliseconds t,
+  ss::abort_source& as,
+  ss::abort_source& term_as,
+  ss::sstring error_msg) {
+    auto sleep_res = co_await ss::coroutine::as_future(
+      ssx::sleep_abortable(t, as, term_as));
+    if (sleep_res.failed()) {
+        auto eptr = sleep_res.get_exception();
+        auto log_lvl = ssx::is_shutdown_exception(eptr) ? ss::log_level::debug
+                                                        : ss::log_level::warn;
+        vlogl(datalake_log, log_lvl, "{}: {}", error_msg, eptr);
+        co_return coordinator::errc::shutting_down;
+    }
+    co_return std::nullopt;
+}
 } // namespace
 
 std::ostream& operator<<(std::ostream& o, coordinator::errc e) {
@@ -146,7 +165,26 @@ coordinator::run_until_term_change(model::term_id term) {
     term_as_ = term_as;
     auto reset_term_as = ss::defer([this] { term_as_.reset(); });
     vlog(datalake_log.debug, "Running coordinator loop in term {}", term);
-    while (raft.is_leader() && term == raft.term()) {
+    bool needs_sleep = false;
+    while (!as_.abort_requested() && raft.is_leader() && term == raft.term()) {
+        if (needs_sleep) {
+            auto sleep_res = co_await sleep_for(
+              100ms,
+              as_,
+              term_as,
+              fmt::format(
+                "Coordinator hit exception sleeping for new iteration in term "
+                "{}",
+                term));
+            if (sleep_res.has_error()) {
+                co_return sleep_res.error();
+            }
+        }
+        needs_sleep = false;
+        // If we end up continuing early, set up the next iteration to sleep a
+        // bit to avoid potential tight loops.
+        auto scoped_set_sleep = ss::defer(
+          [&needs_sleep] { needs_sleep = true; });
         // Make a copy of the topics to reconcile, in case the map changes
         // during this call.
         // TODO: probably worth building a more robust scheduler.
@@ -226,21 +264,16 @@ coordinator::run_until_term_change(model::term_id term) {
                 }
             }
         }
-        auto sleep_res = co_await ss::coroutine::as_future(
-          ssx::sleep_abortable(commit_interval_(), as_, term_as));
-        if (sleep_res.failed()) {
-            auto eptr = sleep_res.get_exception();
-            auto log_lvl = ssx::is_shutdown_exception(eptr)
-                             ? ss::log_level::debug
-                             : ss::log_level::warn;
-            vlogl(
-              datalake_log,
-              log_lvl,
-              "Coordinator hit exception while sleeping in term {}: {}",
-              term,
-              eptr);
-            co_return errc::shutting_down;
+        auto sleep_res = co_await sleep_for(
+          commit_interval_(),
+          as_,
+          term_as,
+          fmt::format(
+            "Coordinator hit exception while sleeping in term {}", term));
+        if (sleep_res.has_error()) {
+            co_return sleep_res.error();
         }
+        scoped_set_sleep.cancel();
         // Onto the next iteration!
     }
     co_return std::nullopt;
