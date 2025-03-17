@@ -6,6 +6,7 @@
 #
 # https://github.com/redpanda-data/redpanda/blob/master/licenses/rcl.md
 
+import time
 from ducktape.mark import matrix
 from ducktape.utils.util import wait_until
 from rptest.services.catalog_service import CatalogType
@@ -16,6 +17,7 @@ from rptest.services.redpanda import PandaproxyConfig, SchemaRegistryConfig, SIS
 from rptest.services.redpanda_connect import RedpandaConnectService
 from rptest.tests.datalake.datalake_services import DatalakeServices
 from rptest.tests.datalake.query_engine_base import QueryEngineType
+from rptest.util import firewall_blocked
 from rptest.utils.rpcn_utils import counter_stream_config
 from typing import Any
 
@@ -116,10 +118,20 @@ class TranslatorsStressTest(RedpandaTest):
                         return False
                 return True
 
+            time.sleep(30)
+            s3_port = self.si_settings.cloud_storage_api_endpoint_port
+            with firewall_blocked(self.redpanda.nodes, s3_port):
+                time.sleep(10)
+
+            time.sleep(30)
+
+            with firewall_blocked(self.redpanda.nodes, s3_port):
+                time.sleep(10)
+
             wait_until(
                 lambda: all_partitions_translated(realtime_topic, 100, 1),
-                timeout_sec=60,
+                timeout_sec=120,
                 backoff_sec=1)
             wait_until(lambda: all_partitions_translated(laggy_topic, 100, 1),
-                       timeout_sec=60,
+                       timeout_sec=120,
                        backoff_sec=1)
