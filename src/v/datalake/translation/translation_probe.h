@@ -40,6 +40,12 @@ public:
         counter_ref(cause)++;
     }
 
+    void increment_raw_bytes_processed(size_t b) { raw_bytes_processed += b; }
+    void increment_raw_bytes_translated(size_t b) { raw_bytes_translated += b; }
+    void increment_decompressed_bytes_translated(size_t b) {
+        decompressed_bytes_translated += b;
+    }
+
     size_t& counter_ref(invalid_record_cause cause) {
         switch (cause) {
         case invalid_record_cause::failed_kafka_schema_resolution:
@@ -61,6 +67,20 @@ private:
     size_t _num_failed_kafka_schema_resolution = 0;
     size_t _num_failed_data_translation = 0;
     size_t _num_failed_iceberg_schema_resolution = 0;
+
+    // Raw bytes consumed for translation that may or may not succeed in being
+    // translated. For example, if we fail to communicate with the coordinator,
+    // preventing translation of a batch, this metric still ticks up.
+    size_t raw_bytes_processed = 0;
+
+    // Raw bytes consumed for translation that were successfully translated.
+    // Note that translation into the DLQ is still considered a success.
+    size_t raw_bytes_translated = 0;
+
+    // Bytes post-decompression consumed for translation that were successfully
+    // translated. Note that translation into the DLQ is still considered a
+    // success.
+    size_t decompressed_bytes_translated = 0;
 };
 
 std::ostream&
