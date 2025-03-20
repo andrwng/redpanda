@@ -298,15 +298,18 @@ public:
           || max_translatable_offset.value() < begin_offset) {
             co_return std::nullopt;
         }
-        auto log_reader = co_await _partition_proxy->make_reader(
-          {kafka::offset_cast(begin_offset),
-           kafka::offset_cast(max_translatable_offset.value()),
-           0,
-           std::numeric_limits<size_t>::max(),
-           io_priority,
-           std::nullopt,
-           std::nullopt,
-           as});
+        auto reader_cfg = storage::log_reader_config{
+          kafka::offset_cast(begin_offset),
+          kafka::offset_cast(max_translatable_offset.value()),
+          0,
+          std::numeric_limits<size_t>::max(),
+          io_priority,
+          std::nullopt,
+          std::nullopt,
+          as};
+        reader_cfg.skip_batch_cache = true;
+        reader_cfg.skip_readers_cache = true;
+        auto log_reader = co_await _partition_proxy->make_reader(reader_cfg);
         auto tracker = kafka::aborted_transaction_tracker::create_default(
           _partition_proxy.get(), std::move(log_reader.ot_state));
         co_return model::make_record_batch_reader<kafka::read_committed_reader>(
