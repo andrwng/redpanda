@@ -743,7 +743,7 @@ public:
         // available for translation.
         vlog(
           datalake_log.trace,
-          "[{}] New offset translated {}, current "
+          "[{}] notifying last translated offset {}, current "
           "translation_target: {}",
           _partition->ntp(),
           translated_offset,
