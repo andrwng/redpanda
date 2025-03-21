@@ -85,7 +85,7 @@ partition_translator::partition_translator(
   : _sg(sg)
   , _coordinator(std::move(coordinator))
   , _data_source(std::move(data_source))
-  , _translation_ctx(std::move(translation_ctx))
+  , _translator(std::move(translation_ctx))
   , _lag_tracking(std::move(lag_tracker))
   , _jitter{std::move(jitter)}
   , _retry_max_timeout(retry_max_timeout)
@@ -98,7 +98,7 @@ void partition_translator::reconcile_properties() noexcept {
     if (_gate.is_closed()) {
         return;
     }
-    _translation_ctx->reconcile_properties();
+    _translator->reconcile_properties();
 }
 
 ss::future<coordinator::fetch_latest_translated_offset_reply>
@@ -138,7 +138,7 @@ partition_translator::checkpoint_translation_result(
 }
 
 bool partition_translator::should_finish_inflight_translation() const {
-    auto bytes_flushed_pending_upload = _translation_ctx->flushed_bytes();
+    auto bytes_flushed_pending_upload = _translator->flushed_bytes();
     auto lag_window_ended = _lag_tracking->should_finish_inflight_translation();
     vlog(
       _logger.trace,
@@ -191,7 +191,7 @@ partition_translator::fetch_translation_offsets(retry_chain_node& rcn) {
         co_return std::nullopt;
     }
 
-    auto current_translation_lto = _translation_ctx->last_translated_offset();
+    auto current_translation_lto = _translator->last_translated_offset();
     /**
      * If there is no current translation lto or checkpointed value is
      * greater than the current translation lto update it.
@@ -253,13 +253,13 @@ partition_translator::run_one_translation_iteration(
             as.request_abort_ex(translator_time_quota_exceeded_error{});
         });
 
-        auto translation_f = _translation_ctx
+        auto translation_f = _translator
                                ->translate_now(
                                  std::move(reader.value()),
                                  begin_offset,
                                  _inflight_translation_state->as)
                                .finally(
-                                 [this] { return _translation_ctx->flush(); });
+                                 [this] { return _translator->flush(); });
         cancellation_timer.arm(_inflight_translation_state->translate_for);
         co_await std::move(translation_f).finally([&cancellation_timer] {
             cancellation_timer.cancel();
@@ -299,7 +299,7 @@ partition_translator::run_one_translation_iteration(
     _scheduler->notify_done(id());
 
     if (unexpected_ex) {
-        co_await _translation_ctx->discard();
+        co_await _translator->discard();
         std::rethrow_exception(unexpected_ex);
     }
     co_return result;
@@ -307,7 +307,7 @@ partition_translator::run_one_translation_iteration(
 
 ss::future<bool> partition_translator::finish_inflight_translation(
   kafka::offset coordinator_lto, retry_chain_node& rcn) {
-    auto finish_result = co_await _translation_ctx->finish(rcn, _as);
+    auto finish_result = co_await _translator->finish(rcn, _as);
     if (finish_result.has_error()) {
         auto error = finish_result.error();
         vlog(_logger.trace, "Translation finish ran into an error: {}", error);
@@ -458,7 +458,7 @@ ss::future<> partition_translator::init(
               })
               .then([this] {
                   // discard any inflight state and start from scratch
-                  return _translation_ctx->discard().then_wrapped(
+                  return _translator->discard().then_wrapped(
                     [this](ss::future<> f) {
                         if (f.failed()) {
                             vlog(
@@ -491,7 +491,7 @@ scheduling::translation_status partition_translator::status() const {
     return scheduling::translation_status{
       .target_lag = _lag_tracking->target_lag(),
       .next_checkpoint_deadline = _lag_tracking->next_checkpoint_deadline(),
-      .memory_bytes_reserved = _translation_ctx->buffered_bytes(),
+      .memory_bytes_reserved = _translator->buffered_bytes(),
       .translation_backlog = _lag_tracking->translation_backlog(),
     };
 }

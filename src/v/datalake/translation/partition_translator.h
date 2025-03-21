@@ -181,7 +181,7 @@ private:
     ss::scheduling_group _sg;
     std::unique_ptr<coordinator_api> _coordinator;
     std::unique_ptr<data_source> _data_source;
-    std::unique_ptr<translation_context> _translation_ctx;
+    std::unique_ptr<translation_context> _translator;
     std::unique_ptr<translation_lag_tracker> _lag_tracking;
     // TODO: consider baking backoff into the scheduler on translation failure.
     jitter_t _jitter;
