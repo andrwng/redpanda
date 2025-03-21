@@ -59,6 +59,7 @@ public:
 
 private:
     void register_invalid_record_metric();
+    void register_throughput_metrics();
 
 private:
     model::ntp _ntp;

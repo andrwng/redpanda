@@ -30,7 +30,65 @@ translation_probe::translation_probe(model::ntp ntp)
     if (!config::shard_local_cfg().disable_public_metrics()) {
         _public_metrics.emplace();
         register_invalid_record_metric();
+        register_throughput_metrics();
     }
+}
+
+void translation_probe::register_throughput_metrics() {
+    namespace sm = ss::metrics;
+    std::vector<sm::label_instance> labels{
+      namespace_label(_ntp.ns()),
+      topic_label(_ntp.tp.topic()),
+      partition_label(_ntp.tp.partition()),
+    };
+    _public_metrics->add_group(
+      group_name,
+      {{
+         sm::make_counter(
+           "raw_bytes_processed",
+           raw_bytes_processed,
+           sm::description(
+             "Number of raw bytes consumed for translation that may or may not "
+             "succeed in being translated. For example, if we fail to "
+             "communicate with the coordinator preventing translation of a "
+             "batch, this metric still ticks up. Only accounts for translation "
+             "and not the commit to Iceberg."),
+           labels)
+           .aggregate({
+             sm::shard_label,
+             partition_label,
+           }),
+       },
+       {
+         sm::make_counter(
+           "raw_bytes_translated",
+           raw_bytes_translated,
+           sm::description(
+             "Raw bytes consumed for translation that were successfully "
+             "translated. Note that translation in to the DLQ is still "
+             "considered success. Only accounts for translation and not the "
+             "commit to Iceberg."),
+           labels)
+           .aggregate({
+             sm::shard_label,
+             partition_label,
+           }),
+       },
+       {
+         sm::make_counter(
+           "decompressed_bytes_translated",
+           decompressed_bytes_translated,
+           sm::description(
+             "Bytes post-decompression consumed for translation that were "
+             "successfully translated. Note that translation into the DLQ is "
+             "still considered success. Only accounts for translation and not "
+             "the commit to Iceberg."),
+           labels)
+           .aggregate({
+             sm::shard_label,
+             partition_label,
+           }),
+       }});
 }
 
 void translation_probe::register_invalid_record_metric() {
