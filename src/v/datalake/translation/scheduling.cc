@@ -74,6 +74,17 @@ public:
         return _total_memory - _available_memory.available_units();
     }
 
+    void log_status(std::string_view context) const override {
+        vlog(
+          datalake_log.trace,
+          "AWONG {} reservation tracking status: {} available, {} reserved, {} "
+          "total",
+          context,
+          _available_memory.available_units(),
+          allocated_memory(),
+          _total_memory);
+    }
+
 private:
     const size_t _total_memory;
     // note: the semaphore should be alive until all the reserved units are

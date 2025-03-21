@@ -235,9 +235,12 @@ partition_translator::run_one_translation_iteration(
     std::exception_ptr unexpected_ex = nullptr;
     auto result = finish_immediately::no;
     try {
+        _reservations->log_status(
+          fmt::format("Waiting for scheduling: {}", id()));
         co_await _ready_to_translate.wait(
           [this] { return _inflight_translation_state.has_value(); });
         auto& as = _inflight_translation_state->as;
+        _reservations->log_status(fmt::format("Making reader for: {}", id()));
         auto reader = co_await _data_source->make_log_reader(
           begin_offset, datalake_priority(), as);
         if (!reader) {
@@ -289,6 +292,8 @@ partition_translator::run_one_translation_iteration(
     // inflight_translation_state tracks a single scheduled chunk of
     // work, so we reset it to nullopt for the next time we're scheduled
     // in
+    _reservations->log_status(
+      fmt::format("Notifying completion of iter for {}", id()));
     _inflight_translation_state.reset();
     // Let the scheduler know we are done
     _scheduler->notify_done(id());
@@ -413,6 +418,7 @@ ss::future<> partition_translator::translate_until_stopped() {
             }
             finish_now = translate_f.get();
         }
+        _reservations->log_status(fmt::format("Deciding should flush {}", id));
         if (finish_now || should_finish_inflight_translation()) {
             auto success = co_await finish_inflight_translation(
               offsets->coordinator_lto, rcn);
@@ -435,6 +441,7 @@ ss::future<> partition_translator::init(
     _scheduler = &scheduler;
     _reservations = &reservations;
     _initialized = true;
+    _reservations->log_status("Initializing translator");
     ssx::repeat_until_gate_closed_or_aborted(_gate, _as, [this] {
         return ss::with_scheduling_group(_sg, [this] {
             return translate_until_stopped()

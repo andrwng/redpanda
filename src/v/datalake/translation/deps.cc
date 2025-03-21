@@ -525,6 +525,7 @@ public:
             // improvement could be to account for the fixed reservation cost
             // across flush calls and only release on finish.
             vlog(datalake_log.trace, "[{}] flushing writers", _ntp);
+            _reservations.log_status(fmt::format("Flushing {}", _ntp));
             return _in_progress_translation->flush()
               .then_wrapped([](auto result_f) {
                   if (result_f.failed()) {

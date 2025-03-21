@@ -83,6 +83,7 @@ public:
     virtual bool memory_exhausted() const = 0;
 
     virtual size_t allocated_memory() const = 0;
+    virtual void log_status(std::string_view) const {};
 
     static std::unique_ptr<reservations_tracker> make_default(
       size_t total_memory, size_t memory_block_size, scheduling_notifications&);
