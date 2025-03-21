@@ -73,7 +73,7 @@ ss::futurize_t<FuncRet> retry_with_backoff(
 
 } // namespace
 
-partition_translator::partition_translator(
+partition_translation_runner::partition_translation_runner(
   ss::scheduling_group sg,
   std::unique_ptr<coordinator_api> coordinator,
   std::unique_ptr<data_source> data_source,
@@ -94,7 +94,7 @@ partition_translator::partition_translator(
   , _logger(
       datalake_log, fmt::format("{}-term-{}", _data_source->ntp(), _term)) {}
 
-void partition_translator::reconcile_properties() noexcept {
+void partition_translation_runner::reconcile_properties() noexcept {
     if (_gate.is_closed()) {
         return;
     }
@@ -102,7 +102,8 @@ void partition_translator::reconcile_properties() noexcept {
 }
 
 ss::future<coordinator::fetch_latest_translated_offset_reply>
-partition_translator::fetch_latest_translated_offset(retry_chain_node& rcn) {
+partition_translation_runner::fetch_latest_translated_offset(
+  retry_chain_node& rcn) {
     auto request = coordinator::fetch_latest_translated_offset_request{};
     request.tp = _data_source->ntp().tp;
     request.topic_revision = _data_source->topic_revision();
@@ -119,7 +120,7 @@ partition_translator::fetch_latest_translated_offset(retry_chain_node& rcn) {
 }
 
 ss::future<coordinator::add_translated_data_files_reply>
-partition_translator::checkpoint_translation_result(
+partition_translation_runner::checkpoint_translation_result(
   retry_chain_node& rcn, coordinator::translated_offset_range range) {
     auto request = coordinator::add_translated_data_files_request{};
     request.tp = _data_source->ntp().tp;
@@ -137,7 +138,7 @@ partition_translator::checkpoint_translation_result(
       });
 }
 
-bool partition_translator::should_finish_inflight_translation() const {
+bool partition_translation_runner::should_finish_inflight_translation() const {
     auto bytes_flushed_pending_upload = _translator->flushed_bytes();
     auto lag_window_ended = _lag_tracking->should_finish_inflight_translation();
     vlog(
@@ -150,8 +151,8 @@ bool partition_translator::should_finish_inflight_translation() const {
            || lag_window_ended;
 }
 
-ss::future<std::optional<partition_translator::translation_offsets>>
-partition_translator::fetch_translation_offsets(retry_chain_node& rcn) {
+ss::future<std::optional<partition_translation_runner::translation_offsets>>
+partition_translation_runner::fetch_translation_offsets(retry_chain_node& rcn) {
     // Reconcile with the coordinator
     auto result = co_await fetch_latest_translated_offset(rcn);
     if (result.errc != coordinator::errc::ok) {
@@ -223,8 +224,8 @@ partition_translator::fetch_translation_offsets(retry_chain_node& rcn) {
     co_return offsets;
 }
 
-ss::future<partition_translator::finish_immediately>
-partition_translator::run_one_translation_iteration(
+ss::future<partition_translation_runner::finish_immediately>
+partition_translation_runner::run_one_translation_iteration(
   kafka::offset begin_offset) {
     _lag_tracking->notify_new_data_for_translation(begin_offset);
     // Notify the scheduler that there is some data to translate
@@ -305,7 +306,7 @@ partition_translator::run_one_translation_iteration(
     co_return result;
 }
 
-ss::future<bool> partition_translator::finish_inflight_translation(
+ss::future<bool> partition_translation_runner::finish_inflight_translation(
   kafka::offset coordinator_lto, retry_chain_node& rcn) {
     auto finish_result = co_await _translator->finish(rcn, _as);
     if (finish_result.has_error()) {
@@ -385,7 +386,7 @@ ss::future<bool> partition_translator::finish_inflight_translation(
     co_return true;
 }
 
-ss::future<> partition_translator::translate_until_stopped() {
+ss::future<> partition_translation_runner::translate_until_stopped() {
     const auto& id = _data_source->ntp();
     vassert(
       _initialized && _scheduler && _reservations,
@@ -431,11 +432,11 @@ ss::future<> partition_translator::translate_until_stopped() {
     }
 }
 
-const scheduling::translator_id& partition_translator::id() const {
+const scheduling::translator_id& partition_translation_runner::id() const {
     return _data_source->ntp();
 }
 
-ss::future<> partition_translator::init(
+ss::future<> partition_translation_runner::init(
   scheduling::scheduling_notifications& scheduler,
   scheduling::reservations_tracker& reservations) {
     _scheduler = &scheduler;
@@ -474,7 +475,7 @@ ss::future<> partition_translator::init(
     return ss::make_ready_future();
 }
 
-ss::future<> partition_translator::close() noexcept {
+ss::future<> partition_translation_runner::close() noexcept {
     vlog(_logger.debug, "stopping partition translator in term {}", _term);
     _as.request_abort();
     _ready_to_translate.broken();
@@ -487,7 +488,7 @@ ss::future<> partition_translator::close() noexcept {
     vlog(_logger.debug, "stopped partition translator in term {}", _term);
 }
 
-scheduling::translation_status partition_translator::status() const {
+scheduling::translation_status partition_translation_runner::status() const {
     return scheduling::translation_status{
       .target_lag = _lag_tracking->target_lag(),
       .next_checkpoint_deadline = _lag_tracking->next_checkpoint_deadline(),
@@ -496,11 +497,11 @@ scheduling::translation_status partition_translator::status() const {
     };
 }
 
-std::chrono::milliseconds partition_translator::current_lag_ms() const {
+std::chrono::milliseconds partition_translation_runner::current_lag_ms() const {
     return _lag_tracking->current_lag_ms();
 }
 
-void partition_translator::start_translation(
+void partition_translation_runner::start_translation(
   scheduling::clock::duration duration) {
     if (_gate.is_closed()) {
         return;
@@ -515,7 +516,7 @@ void partition_translator::start_translation(
     _ready_to_translate.broadcast();
 }
 
-void partition_translator::stop_translation() {
+void partition_translation_runner::stop_translation() {
     if (_gate.is_closed() || !_inflight_translation_state) {
         return;
     }

@@ -24,7 +24,7 @@ class catalog_factory;
 }; // namespace coordinator
 namespace translation {
 class translation_stm;
-class partition_translator;
+class partition_translation_runner;
 }; // namespace translation
 class datalake_manager;
 class cloud_data_io;

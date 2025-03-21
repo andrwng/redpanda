@@ -62,13 +62,13 @@ namespace datalake::translation {
  *
  * See scheduler.h for more details on scheduling translators in general.
  */
-class partition_translator : public scheduling::translator {
+class partition_translation_runner : public scheduling::translator {
 private:
     using jitter_t
       = simple_time_jitter<ss::lowres_clock, std::chrono::milliseconds>;
 
 public:
-    explicit partition_translator(
+    explicit partition_translation_runner(
       ss::scheduling_group,
       std::unique_ptr<coordinator_api>,
       std::unique_ptr<data_source>,

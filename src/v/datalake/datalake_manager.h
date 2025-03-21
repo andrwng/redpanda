@@ -98,7 +98,8 @@ public:
     bool max_shares_assigned() const;
 
 private:
-    using translator = std::unique_ptr<translation::partition_translator>;
+    using translator
+      = std::unique_ptr<translation::partition_translation_runner>;
 
     ss::future<> handle_translator_state_change(const model::ntp&);
 

@@ -410,7 +410,7 @@ public:
 protected:
     ss::future<bool> add_translator(fake_test_ctx& ctx) {
         return _scheduler->add_translator(
-          std::make_unique<partition_translator>(
+          std::make_unique<partition_translation_runner>(
             test_sg,
             std::make_unique<fake_coordinator_api>(ctx),
             std::make_unique<fake_data_src>(ctx),
