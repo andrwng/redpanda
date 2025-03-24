@@ -175,38 +175,50 @@ partition_translation_runner::fetch_translation_offsets(retry_chain_node& rcn) {
     // least until 'wait_for_data' returns and we re-enter the loop.
     _data_source->update_commit_lag(last_committed_offset);
 
-    // LTO stands for last translated offset
-    const auto checkpointed_lto = result.last_added_offset.value_or(
-      kafka::prev_offset(_data_source->min_offset_for_translation()));
-    /**
-     * We do not replicate the timestamp of the highest translated offset
-     * here as this information is not present in coordinator. This is fine
-     * as the translation stm will simply use the previous timestamp value.
-     */
-    auto reset_error
-      = co_await _data_source->replicate_highest_translated_offset(
-        checkpointed_lto, std::nullopt, _term, wait_timeout, _as);
+    // LTO stands for last translated offset.
+    std::optional<kafka::offset> new_lto;
+    if (result.last_added_offset.has_value()) {
+        const auto checkpointed_lto = result.last_added_offset.value();
+        /**
+         * We do not replicate the timestamp of the highest translated offset
+         * here as this information is not present in coordinator. This is fine
+         * as the translation stm will simply use the previous timestamp value.
+         */
+        new_lto = checkpointed_lto;
+    } else {
+        auto min_start_offset = _data_source->min_offset_for_translation();
+        if (min_start_offset >= kafka::offset{0}) {
+            new_lto = kafka::prev_offset(min_start_offset);
+        }
+    }
+    // NOTE: new_lto is nullopt if the coordinator doesn't have a startpoint
+    // for this partition and this local log empty. It may be kafka::offset{}
+    // if the local log start was 0 (prev(0) is kafka:offset{}).
+    if (new_lto.has_value()) {
+        auto reset_error
+          = co_await _data_source->replicate_highest_translated_offset(
+            *new_lto, std::nullopt, _term, wait_timeout, _as);
 
-    if (reset_error) {
-        vlog(
-          _logger.warn,
-          "error updating highest translated offset: {}, translation "
-          "will "
-          "be retried",
-          reset_error);
-        co_return std::nullopt;
+        if (reset_error) {
+            vlog(
+              _logger.warn,
+              "error updating highest translated offset: {}, translation "
+              "will be retried",
+              reset_error);
+            co_return std::nullopt;
+        }
     }
 
     auto current_translation_lto = _translator->last_translated_offset();
-    /**
-     * If there is no current translation lto or checkpointed value is
-     * greater than the current translation lto update it.
-     */
-    if (
-      !current_translation_lto || checkpointed_lto > current_translation_lto) {
-        _lag_tracking->notify_data_translated(checkpointed_lto);
-        _data_source->update_translation_lag(checkpointed_lto);
-        current_translation_lto = checkpointed_lto;
+    if (new_lto.has_value()) {
+        // If there is no current translation lto or checkpointed value is
+        // greater than the current translation lto update it.
+        if (!current_translation_lto || *new_lto > current_translation_lto) {
+            _lag_tracking->notify_data_translated(*new_lto);
+            _data_source->update_translation_lag(*new_lto);
+        }
+    } else {
+        new_lto = current_translation_lto;
     }
 
     scoped_reconcile_tick.reset();
@@ -215,17 +227,15 @@ partition_translation_runner::fetch_translation_offsets(retry_chain_node& rcn) {
     static constexpr auto data_wait_duration = 3s;
     // Wait until some data is ready to be translated.
     auto maybe_begin_offset = co_await _data_source->wait_for_data_to_translate(
-      current_translation_lto,
-      ss::lowres_clock::now() + data_wait_duration,
-      _as);
+      new_lto, ss::lowres_clock::now() + data_wait_duration, _as);
 
     translation_offsets offsets;
-    offsets.coordinator_lto = checkpointed_lto;
+    offsets.coordinator_lto = new_lto.value_or(kafka::offset{});
     if (!maybe_begin_offset) {
         vlog(
           _logger.trace,
-          "No new data to translate, last translated offset:{}",
-          checkpointed_lto);
+          "No new data to translate above last translated offset: {}",
+          new_lto);
         co_return offsets;
     }
     offsets.next_translation_begin_offset = maybe_begin_offset.value();
