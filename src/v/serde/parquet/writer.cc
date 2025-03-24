@@ -11,9 +11,11 @@
 
 #include "serde/parquet/writer.h"
 
+#include "base/vlog.h"
 #include "bytes/iobuf.h"
 #include "bytes/iostream.h"
 #include "container/contiguous_range_map.h"
+#include "serde/logger.h"
 #include "serde/parquet/column_writer.h"
 #include "serde/parquet/metadata.h"
 #include "serde/parquet/shredder.h"
@@ -156,8 +158,10 @@ public:
     ss::future<> close() {
         co_await flush_row_group();
         int64_t num_rows = 0;
+        size_t num_rgs = 0;
         for (const auto& rg : _row_groups) {
             num_rows += rg.num_rows;
+            num_rgs++;
         }
         chunked_vector<column_order> orders;
         _opts.schema.for_each([&orders](const schema_element& element) {
@@ -176,6 +180,11 @@ public:
           .column_orders = std::move(orders),
         });
         size_t footer_size = encoded_footer.size_bytes();
+        vlog(
+          serde_log.debug,
+          "AWONG closing footer: {} bytes, {} rowgroups",
+          footer_size,
+          num_rgs);
         co_await write_iobuf(std::move(encoded_footer));
         co_await write_iobuf(encode_footer_size(footer_size));
         co_await write_iobuf(iobuf::from("PAR1"));
