@@ -394,7 +394,10 @@ size_t record_multiplexer::flushed_bytes() const {
 
 std::optional<kafka::offset>
 record_multiplexer::last_translated_offset() const {
-    return _result ? std::make_optional(_result->last_offset) : std::nullopt;
+    if (!_result || _result->last_offset == kafka::offset{}) {
+        return std::nullopt;
+    }
+    return _result->last_offset;
 }
 
 ss::future<result<std::nullopt_t, writer_error>>
