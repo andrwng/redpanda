@@ -145,9 +145,10 @@ bool partition_translation_runner::should_finish_inflight_translation() const {
     auto lag_window_ended = _lag_tracking->should_finish_inflight_translation();
     vlog(
       _logger.trace,
-      "Checking if translation can be finished, current bytes flushed: {}, lag "
+      "Checking if translation can be finished, current bytes flushed: {} vs {}, lag "
       "window roll: {}",
       bytes_flushed_pending_upload,
+      partition_flushed_bytes_limit,
       lag_window_ended);
     return bytes_flushed_pending_upload >= partition_flushed_bytes_limit
            || lag_window_ended;
@@ -445,6 +446,11 @@ ss::future<> partition_translation_runner::translate_until_stopped() {
         _reservations->log_status(
           fmt::format("Deciding should flush {}: {}", id, _metrics));
         if (finish_now || should_finish_inflight_translation()) {
+            if (finish_now) {
+                vlog(datalake_log.trace, "AWONG finishing out of memory, force flusing");
+            } else {
+                vlog(datalake_log.trace, "AWONG finishing at bytes or lag limit, flushing");
+            }
             auto success = co_await finish_inflight_translation(
               offsets->coordinator_lto, rcn);
             if (!success) {
