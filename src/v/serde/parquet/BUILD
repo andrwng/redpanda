@@ -146,6 +146,7 @@ redpanda_cc_library(
         "//src/v/bytes:iobuf",
         "//src/v/bytes:iostream",
         "//src/v/container:contiguous_range_map",
+        "//src/v/serde:serde",
         "@abseil-cpp//absl/container:flat_hash_set",
     ],
     include_prefix = "serde/parquet",
