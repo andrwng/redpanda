@@ -142,15 +142,24 @@ datalake_manager::~datalake_manager() = default;
 double datalake_manager::average_translation_backlog() {
     size_t total_lag = 0;
     size_t translators_with_backlog = 0;
+    auto now = ss::lowres_clock::now();
     const auto& translators = _scheduler.all_translators();
+    size_t num_behind = 0;
     for (const auto& [_, translator] : translators) {
         auto backlog_size = translator.status().translation_backlog;
         // skip over translators that are not yet ready to report anything
         if (!backlog_size) {
             continue;
         }
+        if (translator.status().next_checkpoint_deadline < now) {
+            ++num_behind;
+        }
         total_lag += backlog_size.value();
         translators_with_backlog++;
+    }
+    if (num_behind > 0) {
+        return config::shard_local_cfg().iceberg_target_backlog_size()
+               * num_behind;
     }
 
     if (translators_with_backlog == 0) {
