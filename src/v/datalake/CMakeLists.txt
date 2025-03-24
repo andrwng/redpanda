@@ -14,6 +14,7 @@ v_cc_library(
 v_cc_library(
   NAME datalake_manager
   SRCS
+    probe.cc
     datalake_manager.cc
     backlog_controller.cc
   DEPS

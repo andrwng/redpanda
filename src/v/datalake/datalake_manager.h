@@ -18,6 +18,7 @@
 #include "datalake/backlog_controller.h"
 #include "datalake/fwd.h"
 #include "datalake/location.h"
+#include "datalake/probe.h"
 #include "datalake/record_schema_resolver.h"
 #include "datalake/translation/partition_translator.h"
 #include "datalake/translation/scheduling.h"
@@ -126,6 +127,7 @@ private:
     std::unique_ptr<datalake::schema_manager> _schema_mgr;
     std::unique_ptr<datalake::schema_cache> _schema_cache;
     std::unique_ptr<backlog_controller> _backlog_controller;
+    runner_metrics _runner_metrics;
     chunked_hash_map<model::ntp, ss::lw_shared_ptr<class translation_probe>>
       _translation_probe_by_ntp;
     ss::sharded<ss::abort_source>* _as;

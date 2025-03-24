@@ -139,6 +139,7 @@ redpanda_cc_library(
         "//src/v/base",
         "//src/v/cluster",
         "//src/v/datalake:logger",
+        "//src/v/datalake:probe",
         "//src/v/features",
         "//src/v/model",
         "//src/v/random:time_jitter",

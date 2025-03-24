@@ -166,6 +166,21 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "probe",
+    srcs = [
+        "probe.cc",
+    ],
+    hdrs = [
+        "probe.h",
+    ],
+    include_prefix = "datalake",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@fmt",
+    ],
+)
+
+redpanda_cc_library(
     name = "manager",
     srcs = [
         "datalake_manager.cc",
@@ -181,6 +196,7 @@ redpanda_cc_library(
         ":cloud_data_io",
         ":location",
         ":logger",
+        ":probe",
         ":record_translator",
         ":types",
         "//src/v/base",
