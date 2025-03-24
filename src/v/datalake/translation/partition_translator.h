@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "datalake/probe.h"
 #include "datalake/translation/deps.h"
 #include "datalake/translation/scheduling.h"
 #include "random/simple_time_jitter.h"
@@ -76,7 +77,8 @@ public:
       std::unique_ptr<translation_lag_tracker>,
       jitter_t jitter,
       std::chrono::milliseconds retry_max_timeout,
-      std::chrono::milliseconds retry_initial_backoff);
+      std::chrono::milliseconds retry_initial_backoff,
+      runner_metrics& metrics);
 
     const scheduling::translator_id& id() const final;
 
@@ -190,6 +192,7 @@ private:
     model::term_id _term;
     prefix_logger _logger;
     bool _initialized = false;
+    runner_metrics& _metrics;
     // set in init()
     scheduling::scheduling_notifications* _scheduler{nullptr};
     scheduling::reservations_tracker* _reservations{nullptr};

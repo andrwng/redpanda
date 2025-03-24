@@ -11,6 +11,7 @@
 #include "datalake/translation/partition_translator.h"
 
 #include "datalake/logger.h"
+#include "datalake/probe.h"
 #include "resource_mgmt/io_priority.h"
 #include "utils/to_string.h"
 
@@ -81,7 +82,8 @@ partition_translation_runner::partition_translation_runner(
   std::unique_ptr<translation_lag_tracker> lag_tracker,
   jitter_t jitter,
   std::chrono::milliseconds retry_max_timeout,
-  std::chrono::milliseconds retry_initial_backoff)
+  std::chrono::milliseconds retry_initial_backoff,
+  runner_metrics& metrics)
   : _sg(sg)
   , _coordinator(std::move(coordinator))
   , _data_source(std::move(data_source))
@@ -91,8 +93,8 @@ partition_translation_runner::partition_translation_runner(
   , _retry_max_timeout(retry_max_timeout)
   , _retry_initial_backoff(retry_initial_backoff)
   , _term(_data_source->term())
-  , _logger(
-      datalake_log, fmt::format("{}-term-{}", _data_source->ntp(), _term)) {}
+  , _logger(datalake_log, fmt::format("{}-term-{}", _data_source->ntp(), _term))
+  , _metrics(metrics) {}
 
 void partition_translation_runner::reconcile_properties() noexcept {
     if (_gate.is_closed()) {
@@ -153,6 +155,8 @@ bool partition_translation_runner::should_finish_inflight_translation() const {
 
 ss::future<std::optional<partition_translation_runner::translation_offsets>>
 partition_translation_runner::fetch_translation_offsets(retry_chain_node& rcn) {
+    auto scoped_reconcile_tick
+      = _metrics.scoped_increment_translators_reconciling();
     // Reconcile with the coordinator
     auto result = co_await fetch_latest_translated_offset(rcn);
     if (result.errc != coordinator::errc::ok) {
@@ -204,6 +208,9 @@ partition_translation_runner::fetch_translation_offsets(retry_chain_node& rcn) {
         current_translation_lto = checkpointed_lto;
     }
 
+    scoped_reconcile_tick.reset();
+    auto scoped_await_data_tick
+      = _metrics.scoped_increment_translators_awaiting_data();
     static constexpr auto data_wait_duration = 3s;
     // Wait until some data is ready to be translated.
     auto maybe_begin_offset = co_await _data_source->wait_for_data_to_translate(
@@ -236,12 +243,20 @@ partition_translation_runner::run_one_translation_iteration(
     std::exception_ptr unexpected_ex = nullptr;
     auto result = finish_immediately::no;
     try {
+        auto scoped_await_scheduling_tick
+          = _metrics.scoped_increment_translators_awaiting_scheduling();
         _reservations->log_status(
-          fmt::format("Waiting for scheduling: {}", id()));
+          fmt::format("Waiting for scheduling: {}: {}", id(), _metrics));
         co_await _ready_to_translate.wait(
           [this] { return _inflight_translation_state.has_value(); });
+
+        scoped_await_scheduling_tick.reset();
+        auto scoped_translate_tick
+          = _metrics.scoped_increment_translators_translating();
+
         auto& as = _inflight_translation_state->as;
-        _reservations->log_status(fmt::format("Making reader for: {}", id()));
+        _reservations->log_status(
+          fmt::format("Making reader for: {}: {}", id(), _metrics));
         auto reader = co_await _data_source->make_log_reader(
           begin_offset, datalake_priority(), as);
         if (!reader) {
@@ -294,7 +309,7 @@ partition_translation_runner::run_one_translation_iteration(
     // work, so we reset it to nullopt for the next time we're scheduled
     // in
     _reservations->log_status(
-      fmt::format("Notifying completion of iter for {}", id()));
+      fmt::format("Notifying completion of iter for {}: {}", id(), _metrics));
     _inflight_translation_state.reset();
     // Let the scheduler know we are done
     _scheduler->notify_done(id());
@@ -308,6 +323,7 @@ partition_translation_runner::run_one_translation_iteration(
 
 ss::future<bool> partition_translation_runner::finish_inflight_translation(
   kafka::offset coordinator_lto, retry_chain_node& rcn) {
+    auto scoped_finish_tick = _metrics.scoped_increment_translators_finishing();
     auto finish_result = co_await _translator->finish(rcn, _as);
     if (finish_result.has_error()) {
         auto error = finish_result.error();
@@ -393,7 +409,9 @@ ss::future<> partition_translation_runner::translate_until_stopped() {
       "[{}] Translation started before the translator is properly initialized",
       id);
     bool needs_jitter = false;
+    std::unique_ptr<runner_metrics::scoped_count_tick> scoped_pending_finish;
     while (!_as.abort_requested()) {
+        auto scoped_idle_tick = _metrics.scoped_increment_translators_idle();
         if (needs_jitter) {
             co_await ss::sleep_abortable(_jitter.next_duration(), _as);
         }
@@ -403,6 +421,7 @@ ss::future<> partition_translation_runner::translate_until_stopped() {
         auto scoped_set_jitter = ss::defer(
           [&needs_jitter] { needs_jitter = true; });
 
+        scoped_idle_tick.reset();
         auto offsets = co_await fetch_translation_offsets(rcn);
         if (!offsets) {
             continue;
@@ -418,14 +437,20 @@ ss::future<> partition_translation_runner::translate_until_stopped() {
                 continue;
             }
             finish_now = translate_f.get();
+            if (!scoped_pending_finish) {
+                scoped_pending_finish
+                  = _metrics.scoped_increment_translators_pending_finish();
+            }
         }
-        _reservations->log_status(fmt::format("Deciding should flush {}", id));
+        _reservations->log_status(
+          fmt::format("Deciding should flush {}: {}", id, _metrics));
         if (finish_now || should_finish_inflight_translation()) {
             auto success = co_await finish_inflight_translation(
               offsets->coordinator_lto, rcn);
             if (!success) {
                 continue;
             }
+            scoped_pending_finish.reset();
         }
         scoped_set_jitter.cancel();
         needs_jitter = false;

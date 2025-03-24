@@ -386,7 +386,8 @@ datalake_manager::handle_translator_state_change(const model::ntp& ntp) {
         simple_time_jitter<ss::lowres_clock, std::chrono::milliseconds>{
           translation_jitter_base, translation_jitter},
         retry_max_timeout,
-        retry_initial_backoff);
+        retry_initial_backoff,
+        _runner_metrics);
 
     auto add_f = co_await ss::coroutine::as_future(
       _scheduler.add_translator(std::move(translator)));

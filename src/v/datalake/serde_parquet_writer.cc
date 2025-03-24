@@ -55,6 +55,7 @@ ss::future<> serde_parquet_writer::flush() {
     auto stats = _writer.stats();
     _buffered_bytes = stats.buffered_size;
     _flushed_bytes = stats.flushed_size;
+    ss::abort_source as;
     vassert(
       _buffered_bytes == 0,
       "Memory buffered in the writer after flush: {}",
