@@ -101,6 +101,10 @@ partitioning_writer::finish() && {
     chunked_vector<partitioned_file> files;
     auto first_error = writer_error::ok;
     // TODO: parallelize me!
+    vlog(
+      datalake_log.trace,
+      "AWONG closing footer remote prefix: {}",
+      remote_prefix_);
     for (auto& [pk, writer] : writers_) {
         auto file_res = co_await writer->finish();
         if (file_res.has_error()) {
