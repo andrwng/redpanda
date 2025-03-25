@@ -210,7 +210,7 @@ partition_translation_runner::fetch_translation_offsets(retry_chain_node& rcn) {
     }
 
     auto current_translation_lto = _translator->last_translated_offset();
-    vlog(datalake_log.info, "AWONG last translated: {}", current_translation_lto);
+    vlog(datalake_log.info, "AWONG current translator LTO: {}", current_translation_lto);
     if (new_lto.has_value()) {
         if (current_translation_lto) {
             // If there is no current translation lto or checkpointed value is
