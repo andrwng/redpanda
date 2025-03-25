@@ -207,6 +207,10 @@ std::optional<kafka::offset> calculate_max_offset_for_translation(
     if (lso.has_error()) {
         return std::nullopt;
     }
+    if (lso.value() <= model::offset{0}) {
+        // No stable data in the log.
+        return std::nullopt;
+    }
     return kafka::prev_offset(model::offset_cast(lso.value()));
 }
 std::chrono::milliseconds calculate_target_lag(
@@ -507,9 +511,14 @@ public:
     }
 
     std::optional<kafka::offset> last_translated_offset() const final {
-        return _in_progress_translation
-                 ? _in_progress_translation->last_translated_offset()
-                 : std::nullopt;
+        if (!_in_progress_translation) {
+            return std::nullopt;
+        }
+        auto last_translated = _in_progress_translation->last_translated_offset();
+        if (last_translated < kafka::offset{0}) {
+            return std::nullopt;
+        }
+        return last_translated;
     }
 
     ss::future<> flush() final {
