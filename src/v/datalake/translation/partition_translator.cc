@@ -210,13 +210,21 @@ partition_translation_runner::fetch_translation_offsets(retry_chain_node& rcn) {
     }
 
     auto current_translation_lto = _translator->last_translated_offset();
+    vlog(datalake_log.info, "AWONG last translated: {}", current_translation_lto);
     if (new_lto.has_value()) {
-        // If there is no current translation lto or checkpointed value is
-        // greater than the current translation lto update it.
-        if (!current_translation_lto || *new_lto > current_translation_lto) {
-            _lag_tracking->notify_data_translated(*new_lto);
-            _data_source->update_translation_lag(*new_lto);
+        if (current_translation_lto) {
+            // If there is no current translation lto or checkpointed value is
+            // greater than the current translation lto update it and use it.
+            if (current_translation_lto < * new_lto) {
+                _lag_tracking->notify_data_translated(*new_lto);
+                _data_source->update_translation_lag(*new_lto);
+            } else {
+                // Otherwise, trust what we have in flight, as it is ahead of
+                // the coordinator.
+                new_lto = current_translation_lto;
+            }
         }
+        // Intentional fallthrough.
     } else {
         new_lto = current_translation_lto;
     }
@@ -452,6 +460,7 @@ ss::future<> partition_translation_runner::translate_until_stopped() {
                 scoped_pending_finish
                   = _metrics.scoped_increment_translators_pending_finish();
             }
+            vlog(_logger.trace, "AWONG finished translating, new LTO: {}", _translator->last_translated_offset());
         }
         _reservations->log_status(
           fmt::format("Deciding should flush {}: {}", id, _metrics));
