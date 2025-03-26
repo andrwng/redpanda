@@ -212,14 +212,6 @@ class DatalakeVerifier():
         finally:
             self._consumer_stopped.set()
 
-    def _get_query(self, partition, last_queried_offset, max_consumed_offset):
-        return f"\
-        SELECT redpanda.offset, redpanda.key FROM redpanda.{self._query.escape_identifier(self.table)} \
-        WHERE redpanda.partition={partition} \
-        AND redpanda.offset>{last_queried_offset} \
-        AND redpanda.offset<={max_consumed_offset} \
-        ORDER BY redpanda.offset"
-
     def _verify_next_message(self, partition, iceberg_offset, iceberg_key):
         if partition not in self._consumed_messages:
             self._errors.append(
@@ -276,37 +268,54 @@ class DatalakeVerifier():
                         timeout=self._query_batch_wait_timeout_s)
                 partitions = self.update_and_get_fetch_positions()
 
-                for partition, next_consume_offset in partitions.items():
-                    last_queried_offset = self._max_queried_offsets[
-                        partition] if partition in self._max_queried_offsets else -1
+                min_last_queried_offset = min([
+                    self._max_queried_offsets[p]
+                    if p in self._max_queried_offsets else -1
+                    for p, _ in partitions.items()
+                ])
+                max_last_consumed_offset = max([
+                    next_consume_offset - 1
+                    for _, next_consume_offset in partitions.items()
+                ])
+                query = f"\
+        SELECT redpanda.partition, redpanda.offset, redpanda.key FROM redpanda.{self._query.escape_identifier(self.table)} \
+        WHERE redpanda.offset>{min_last_queried_offset} \
+        AND redpanda.offset<={max_last_consumed_offset} \
+        ORDER BY redpanda.partition, redpanda.offset"
 
-                    max_consumed = next_consume_offset - 1
-                    # no new messages consumed, skip query
-                    if max_consumed <= last_queried_offset:
-                        continue
+                self.logger.debug(f"Executing query: {query}")
+                with self._query.run_query(query) as cursor:
+                    data_per_p = {}
+                    for p, o, key in cursor:
+                        if p not in data_per_p:
+                            data_per_p[p] = list()
+                        data_per_p[p].append((o, key))
+                    for p, rows in data_per_p.items():
+                        last_consumed = partitions[p] - 1
+                        last_queried_offset = self._max_queried_offsets[
+                            p] if p in self._max_queried_offsets else -1
+                        if last_consumed <= last_queried_offset:
+                            # no new messages consumed, skip query
+                            continue
 
-                    query = self._get_query(partition, last_queried_offset,
-                                            max_consumed)
-                    self.logger.debug(f"Executing query: {query}")
-
-                    with self._query.run_query(query) as cursor:
-                        with self._lock:
-                            for row in cursor:
-                                self._verify_next_message(partition, *row)
-                                if len(self._errors) > 0:
-                                    self.logger.error(
-                                        f"violations detected: {self._errors}, stopping verifier"
-                                    )
-                                    return
-                                self.logger.debug(
-                                    f"verified message on {partition=} offset={row[0]}"
+                        for o, key in rows:
+                            if o <= last_queried_offset or o > last_consumed:
+                                # The offset is not in the range that we care about
+                                # for this partition.
+                                continue
+                            with self._lock:
+                                self._verify_next_message(p, o, key)
+                            if len(self._errors) > 0:
+                                self.logger.error(
+                                    f"violations detected: {self._errors}, stopping verifier"
                                 )
-
+                                return
+                            self.logger.debug(
+                                f"verified message on {p=} offset={o}")
                     if len(self._max_queried_offsets) > 0:
                         self.logger.debug(
                             f"Max queried offsets: {self._max_queried_offsets}"
                         )
-
             except Exception as e:
                 self.logger.error(f"Error querying iceberg table: {e}")
                 sleep(2)
