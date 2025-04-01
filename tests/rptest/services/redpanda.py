@@ -3826,7 +3826,7 @@ class RedpandaService(RedpandaServiceBase):
         # In case it's a big test, do not exhaustively log every object
         # or dump every manifest
         key_dump_limit = 10000
-        manifest_dump_limit = 128
+        manifest_dump_limit = 10000
 
         self.logger.info(
             f"Gathering cloud storage diagnostics in bucket {self.si_settings.cloud_storage_bucket}"
@@ -3841,7 +3841,7 @@ class RedpandaService(RedpandaServiceBase):
                 key_dump_limit -= 1
 
             # Gather manifest.json and topic_manifest.json files
-            if 'manifest.json' in key or 'manifest.bin' in key and manifest_dump_limit > 0:
+            if '.parquet' in key or '.avro' in key and manifest_dump_limit > 0:
                 manifests_to_dump.append(key)
                 manifest_dump_limit -= 1
 
