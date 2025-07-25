@@ -97,6 +97,33 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "simple_stm",
+    srcs = [
+        "simple_stm.cc",
+    ],
+    hdrs = [
+        "simple_stm.h",
+    ],
+    implementation_deps = [
+        ":state_update",
+        "//src/v/cloud_topics:logger",
+        "//src/v/serde",
+        "//src/v/ssx:future_util",
+        "//src/v/utils:prefix_logger",
+    ],
+    include_prefix = "cloud_topics/level_one/metastore",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":state",
+        "//src/v/base",
+        "//src/v/cluster:state_machine_registry",
+        "//src/v/model",
+        "//src/v/raft",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
     name = "state",
     srcs = [
         "state.cc",
