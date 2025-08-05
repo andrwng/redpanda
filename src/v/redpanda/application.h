@@ -15,6 +15,7 @@
 #include "cloud_storage/fwd.h"
 #include "cloud_storage_clients/client_pool.h"
 #include "cloud_topics/app.h"
+#include "cloud_topics/level_one/metastore/frontend.h"
 #include "cluster/archival/fwd.h"
 #include "cluster/config_manager.h"
 #include "cluster/fwd.h"
@@ -203,6 +204,7 @@ public:
     ss::sharded<rpc::connection_cache> _connection_cache;
     ss::sharded<kafka::group_manager> _group_manager;
     ss::sharded<experimental::cloud_topics::app> cloud_topics_api;
+    ss::sharded<experimental::cloud_topics::l1::frontend> l1_metastore_fe;
 
     const std::unique_ptr<pandaproxy::schema_registry::api>& schema_registry() {
         return _schema_registry;

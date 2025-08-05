@@ -22,6 +22,8 @@
 #include "cloud_storage_clients/configuration.h"
 #include "cloud_topics/cluster_services.h"
 #include "cloud_topics/data_plane_impl.h"
+#include "cloud_topics/level_one/metastore/service.h"
+#include "cloud_topics/level_one/metastore/simple_stm.h"
 #include "cloud_topics/level_zero/stm/ctp_stm_factory.h"
 #include "cluster/archival/archival_metadata_stm.h"
 #include "cluster/archival/archiver_manager.h"
@@ -2169,6 +2171,18 @@ void application::wire_up_redpanda_services(
                 controller.get());
           }))
           .get();
+
+        construct_service(
+          l1_metastore_fe,
+          node_id,
+          &metadata_cache,
+          &controller->get_partition_leaders(),
+          &controller->get_shard_table(),
+          &_connection_cache,
+          ss::sharded_parameter([this] {
+              return cloud_topics_api.local().get_l1_domain_supervisor();
+          }))
+          .get();
     }
 
     // group membership
@@ -3118,6 +3132,8 @@ void application::start_runtime_services(
           if (config::shard_local_cfg().development_enable_cloud_topics()) {
               pm.register_factory<
                 experimental::cloud_topics::ctp_stm_factory>();
+              pm.register_factory<
+                experimental::cloud_topics::l1::stm_factory>();
           }
       })
       .get();
@@ -3337,6 +3353,13 @@ void application::start_runtime_services(
               sched_groups.cluster_sg(),
               smp_service_groups.cluster_smp_sg(),
               std::ref(_consumer_group_lag_metrics_frontend)));
+          if (config::shard_local_cfg().development_enable_cloud_topics()) {
+              runtime_services.push_back(
+                std::make_unique<experimental::cloud_topics::l1::rpc::service>(
+                  sched_groups.datalake_sg(),
+                  smp_service_groups.datalake_sg(),
+                  &l1_metastore_fe));
+          }
 
           s.add_services(std::move(runtime_services));
 

@@ -23,6 +23,8 @@ redpanda_cc_library(
         "//src/v/cloud_topics:cluster_services_interface",
         "//src/v/cloud_topics:data_plane_impl",
         "//src/v/cloud_topics:app",
+        "//src/v/cloud_topics/level_one/metastore:frontend",
+        "//src/v/cloud_topics/level_one/metastore:simple_stm",
         "//src/v/cloud_topics/level_zero/stm:ctp_stm_factory",
         "//src/v/cluster",
         "//src/v/cluster/utils:partition_change_notifier_impl",
