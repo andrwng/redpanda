@@ -89,6 +89,14 @@ public:
         return it->second;
     }
 
+    ss::future<bool> maybe_create_metastore_topic() {
+        if (_controller->get_topics_state().local().contains(
+              model::l1_metastore_nt)) {
+            co_return true;
+        }
+        co_return co_await create_domains_topic();
+    }
+
 private:
     ss::future<> do_topic_reconciliation_loop() {
         while (!_as.abort_requested()) {
@@ -98,9 +106,7 @@ private:
                 co_return;
             }
             if (_controller->get_topics_state().local().contains(
-                  model::topic_namespace{
-                    model::kafka_internal_namespace,
-                    model::l1_metastore_topic})) {
+                  model::l1_metastore_nt)) {
                 co_await ensure_domains_replication_factor();
             } else {
                 co_await create_domains_topic();
@@ -150,7 +156,7 @@ private:
         }
     }
 
-    ss::future<> create_domains_topic() {
+    ss::future<bool> create_domains_topic() {
         auto tp_ns = model::l1_metastore_nt;
         cluster::topic_properties topic_props;
         // Mark all these as disabled
@@ -161,8 +167,9 @@ private:
           = tristate<std::chrono::milliseconds>();
         topic_props.cleanup_policy_bitflags
           = model::cleanup_policy_bitflags::none;
-        // NOTE: For now we just have a single domain for the entire cluster.
-        co_await create_topic(tp_ns, 1, topic_props);
+        // NOTE: For now we just have a fixed number of domains for the entire
+        // cluster.
+        co_return co_await create_topic(tp_ns, 3, topic_props);
     }
 
     ss::future<> update_topic(cluster::topic_properties_update update) {
@@ -188,7 +195,7 @@ private:
         }
     }
 
-    ss::future<> create_topic(
+    ss::future<bool> create_topic(
       model::topic_namespace_view tp_ns,
       int32_t partition_count,
       cluster::topic_properties properties) {
@@ -208,15 +215,20 @@ private:
                            config::shard_local_cfg().create_topic_timeout_ms());
             vassert(res.size() == 1, "expected a single result");
             ec = res[0].ec;
+            co_return true;
         } catch (const std::exception& ex) {
             vlog(cd_log.warn, "unable to create topic {}: {}", tp_ns, ex);
             ec = cluster::errc::topic_operation_error;
+            co_return false;
         }
-        if (ec != cluster::errc::success) {
-            vlog(cd_log.warn, "failed to create topic {}: {}", tp_ns, ec);
-        } else if (ec != cluster::errc::topic_already_exists) {
+        if (
+          ec == cluster::errc::success
+          || ec == cluster::errc::topic_already_exists) {
             vlog(cd_log.debug, "created topic {}", tp_ns);
+            co_return true;
         }
+        vlog(cd_log.warn, "failed to create topic {}: {}", tp_ns, ec);
+        co_return false;
     }
 
     ss::future<> reset_domain_manager(
@@ -289,6 +301,10 @@ ss::future<> domain_supervisor::stop() { return _impl->stop(); }
 ss::lw_shared_ptr<domain_manager>
 domain_supervisor::get(const model::ntp& ntp) const {
     return _impl->get(ntp);
+}
+
+ss::future<bool> domain_supervisor::maybe_create_metastore_topic() {
+    return _impl->maybe_create_metastore_topic();
 }
 
 } // namespace experimental::cloud_topics::l1

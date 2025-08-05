@@ -34,7 +34,6 @@ redpanda_cc_library(
         "//src/v/base",
         "//src/v/cluster",
         "//src/v/model",
-        "//src/v/raft",
         "//src/v/rpc",
         "@seastar",
     ],

@@ -41,6 +41,10 @@ public:
     // appropriate leadership notification).
     ss::lw_shared_ptr<domain_manager> get(const model::ntp&) const;
 
+    // Creates the L1 metastore topic, returning false if there was an issue
+    // while creating.
+    ss::future<bool> maybe_create_metastore_topic();
+
 private:
     std::unique_ptr<impl> _impl;
 };

@@ -15,12 +15,9 @@
 #include "cloud_topics/logger.h"
 #include "cluster/metadata_cache.h"
 #include "cluster/partition_leaders_table.h"
-#include "cluster/partition_manager.h"
 #include "cluster/shard_table.h"
-#include "cluster/topics_frontend.h"
 #include "hashing/murmur.h"
 #include "model/namespace.h"
-#include "raft/group_manager.h"
 #include "rpc/connection_cache.h"
 
 namespace experimental::cloud_topics::l1 {
@@ -221,18 +218,12 @@ template ss::future<rpc::get_compaction_offsets_reply> frontend::process<
 
 frontend::frontend(
   model::node_id self,
-  ss::sharded<raft::group_manager>* group_mgr,
-  ss::sharded<cluster::partition_manager>* partition_mgr,
-  ss::sharded<cluster::topics_frontend>* topics_frontend,
   ss::sharded<cluster::metadata_cache>* metadata,
   ss::sharded<cluster::partition_leaders_table>* leaders,
   ss::sharded<cluster::shard_table>* shards,
   ss::sharded<::rpc::connection_cache>* connections,
   domain_supervisor* domain_supervisor)
   : _self(self)
-  , _group_mgr(group_mgr)
-  , _partition_mgr(partition_mgr)
-  , _topics_frontend(topics_frontend)
   , _metadata(metadata)
   , _leaders(leaders)
   , _shard_table(shards)
@@ -242,64 +233,7 @@ frontend::frontend(
 ss::future<> frontend::stop() { return _gate.close(); }
 
 ss::future<bool> frontend::ensure_topic_exists() {
-    // todo: make these configurable.
-    static constexpr int16_t default_replication_factor = 3;
-    static constexpr int32_t default_metastore_partitions = 3;
-
-    const auto& metadata = _metadata->local();
-    if (metadata.get_topic_metadata_ref(model::l1_metastore_nt)) {
-        co_return true;
-    }
-    auto replication_factor = default_replication_factor;
-    if (replication_factor > static_cast<int16_t>(metadata.node_count())) {
-        replication_factor = 1;
-    }
-
-    cluster::topic_configuration topic{
-      model::kafka_internal_namespace,
-      model::l1_metastore_topic,
-      default_metastore_partitions,
-      replication_factor};
-
-    // todo: fix this by implementing on demand raft
-    // snapshots.
-    topic.properties.cleanup_policy_bitflags
-      = model::cleanup_policy_bitflags::none;
-    topic.properties.retention_bytes = tristate<size_t>();
-    topic.properties.retention_local_target_bytes = tristate<size_t>();
-    topic.properties.retention_duration = tristate<std::chrono::milliseconds>();
-    topic.properties.retention_local_target_ms
-      = tristate<std::chrono::milliseconds>();
-
-    try {
-        auto res = co_await _topics_frontend->local().autocreate_topics(
-          {std::move(topic)},
-          config::shard_local_cfg().create_topic_timeout_ms());
-        vassert(
-          res.size() == 1,
-          "Incorrect result when creating {}, expected 1 response, "
-          "got: {}",
-          model::l1_metastore_topic,
-          res.size());
-        if (
-          res[0].ec != cluster::errc::success
-          && res[0].ec != cluster::errc::topic_already_exists) {
-            vlog(
-              cd_log.warn,
-              "can not create topic: {} - error: {}",
-              model::l1_metastore_topic,
-              cluster::make_error_code(res[0].ec).message());
-            co_return false;
-        }
-        co_return true;
-    } catch (const std::exception_ptr& e) {
-        vlog(
-          cd_log.warn,
-          "can not create topic: {} - error: {}",
-          model::l1_metastore_topic,
-          e);
-        co_return false;
-    }
+    return _domain_supervisor->maybe_create_metastore_topic();
 }
 
 std::optional<model::partition_id>

@@ -15,7 +15,6 @@
 #include "cloud_topics/level_one/metastore/rpc_types.h"
 #include "cluster/fwd.h"
 #include "model/fundamental.h"
-#include "raft/fwd.h"
 #include "rpc/fwd.h"
 
 #include <seastar/core/abort_source.hh>
@@ -48,9 +47,6 @@ public:
 
     frontend(
       model::node_id self,
-      ss::sharded<raft::group_manager>*,
-      ss::sharded<cluster::partition_manager>*,
-      ss::sharded<cluster::topics_frontend>*,
       ss::sharded<cluster::metadata_cache>*,
       ss::sharded<cluster::partition_leaders_table>*,
       ss::sharded<cluster::shard_table>*,
@@ -140,9 +136,6 @@ private:
 
     ss::gate _gate;
     model::node_id _self;
-    ss::sharded<raft::group_manager>* _group_mgr;
-    ss::sharded<cluster::partition_manager>* _partition_mgr;
-    ss::sharded<cluster::topics_frontend>* _topics_frontend;
     ss::sharded<cluster::metadata_cache>* _metadata;
     ss::sharded<cluster::partition_leaders_table>* _leaders;
     ss::sharded<cluster::shard_table>* _shard_table;
