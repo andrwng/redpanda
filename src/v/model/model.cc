@@ -784,6 +784,29 @@ fmt::iterator format_to(fips_mode_flag f, fmt::iterator out) {
     return fmt::format_to(out, "{}", to_string_view(f));
 }
 
+fmt::iterator format_to(kvstore_type t, fmt::iterator out) {
+    switch (t) {
+    case kvstore_type::none:
+        return fmt::format_to(out, "none");
+    case kvstore_type::cloud:
+        return fmt::format_to(out, "cloud");
+    }
+    return fmt::format_to(out, "unknown");
+}
+
+std::istream& operator>>(std::istream& is, kvstore_type& t) {
+    ss::sstring s;
+    is >> s;
+    try {
+        t = string_switch<kvstore_type>(s)
+              .match("none", kvstore_type::none)
+              .match("cloud", kvstore_type::cloud);
+    } catch (const std::runtime_error&) {
+        is.setstate(std::ios::failbit);
+    }
+    return is;
+}
+
 std::istream& operator>>(std::istream& is, fips_mode_flag& f) {
     ss::sstring s;
     is >> s;
