@@ -53,7 +53,8 @@ fmt::iterator topic_properties::format_to(fmt::iterator it) const {
       "max_compaction_lag_ms: {}, "
       "message_timestamp_before_max_ms: {}, "
       "message_timestamp_after_max_ms: {}, "
-      "redpanda_storage_mode: {}}}",
+      "redpanda_storage_mode: {}, "
+      "kvstore: {}}}",
       compression,
       cleanup_policy_bitflags,
       compaction_strategy,
@@ -100,7 +101,8 @@ fmt::iterator topic_properties::format_to(fmt::iterator it) const {
       max_compaction_lag_ms,
       message_timestamp_before_max_ms,
       message_timestamp_after_max_ms,
-      storage_mode);
+      storage_mode,
+      kvstore);
 }
 bool topic_properties::is_compacted() const {
     if (!cleanup_policy_bitflags) {
