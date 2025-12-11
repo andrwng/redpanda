@@ -44,3 +44,32 @@ redpanda_cc_library(
         "@seastar",
     ],
 )
+
+redpanda_cc_library(
+    name = "lsm_update",
+    srcs = [
+        "lsm_update.cc",
+    ],
+    hdrs = [
+        "lsm_update.h",
+    ],
+    implementation_deps = [
+        "//src/v/cloud_topics/level_one/metastore:domain_uuid",
+        "//src/v/serde:iobuf",
+        "//src/v/serde:named_type",
+        "//src/v/serde:optional",
+        "//src/v/serde:uuid",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":state",
+        ":write_batch_row",
+        "//src/v/base",
+        "//src/v/container:chunked_vector",
+        "//src/v/lsm/proto:manifest_redpanda_proto",
+        "//src/v/model",
+        "//src/v/serde",
+        "//src/v/utils:named_type",
+        "@seastar",
+    ],
+)
