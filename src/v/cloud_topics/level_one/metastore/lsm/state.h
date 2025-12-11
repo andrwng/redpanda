@@ -77,4 +77,13 @@ struct lsm_state
     std::optional<lsm::proto::manifest> persisted_manifest;
 };
 
+struct lsm_stm_snapshot
+  : public serde::
+      envelope<lsm_stm_snapshot, serde::version<0>, serde::compat_version<0>> {
+    lsm_state state;
+
+    ss::future<> serde_async_write(iobuf&) const;
+    ss::future<> serde_async_read(iobuf_parser&, const serde::header&);
+};
+
 } // namespace cloud_topics::l1

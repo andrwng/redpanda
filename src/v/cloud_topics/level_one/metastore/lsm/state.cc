@@ -82,13 +82,4 @@ ss::future<lsm_state> lsm_state::copy() const {
     };
 }
 
-ss::future<> lsm_stm_snapshot::serde_async_write(iobuf& out) const {
-    return state.serde_async_write(out);
-}
-
-ss::future<>
-lsm_stm_snapshot::serde_async_read(iobuf_parser& in, const serde::header& h) {
-    return state.serde_async_read(in, h);
-}
-
 } // namespace cloud_topics::l1
