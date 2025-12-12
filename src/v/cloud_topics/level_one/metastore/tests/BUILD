@@ -3,6 +3,7 @@ load("//bazel:test.bzl", "redpanda_cc_gtest", "redpanda_test_cc_library")
 redpanda_test_cc_library(
     name = "state_utils",
     hdrs = ["state_utils.h"],
+    visibility = ["//visibility:public"],
     deps = [
         "//src/v/cloud_topics/level_one/common:object_id",
         "//src/v/cloud_topics/level_one/metastore:state_update",

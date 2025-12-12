@@ -29,3 +29,27 @@ redpanda_cc_gtest(
         "@seastar",
     ],
 )
+
+redpanda_cc_gtest(
+    name = "state_test",
+    timeout = "moderate",
+    srcs = [
+        "state_test.cc",
+    ],
+    cpu = 1,
+    deps = [
+        "//src/v/bytes",
+        "//src/v/cloud_topics/level_one/metastore/lsm:keys",
+        "//src/v/cloud_topics/level_one/metastore/lsm:state_reader",
+        "//src/v/cloud_topics/level_one/metastore/lsm:state_update",
+        "//src/v/cloud_topics/level_one/metastore/lsm:values",
+        "//src/v/cloud_topics/level_one/metastore/tests:state_utils",
+        "//src/v/container:chunked_vector",
+        "//src/v/lsm",
+        "//src/v/lsm/io:memory_persistence",
+        "//src/v/model",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
