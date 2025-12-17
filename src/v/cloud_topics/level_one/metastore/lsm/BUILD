@@ -204,6 +204,7 @@ redpanda_cc_library(
     hdrs = ["state_update.h"],
     implementation_deps = [
         ":keys",
+        ":values",
     ],
     visibility = ["//visibility:public"],
     deps = [
