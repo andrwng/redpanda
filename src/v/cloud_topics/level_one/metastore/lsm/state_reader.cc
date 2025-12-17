@@ -140,7 +140,48 @@ state_reader::get_extent_ge(
     }
 }
 
-ss::future<std::expected<std::optional<extent_key_range>, state_reader::errc>>
+ss::coroutine::experimental::generator<
+  std::expected<state_reader::extent_row, state_reader::errc>>
+state_reader::extent_key_range::get_rows() {
+    auto fut = co_await ss::coroutine::as_future(_iter.seek(_base_key));
+    if (fut.failed()) {
+        auto ex = fut.get_exception();
+        co_yield std::unexpected(to_errc(ex));
+        co_return;
+    }
+    if (!_iter.valid() || _iter.key() != _base_key) {
+        co_yield std::unexpected(errc::corruption);
+        co_return;
+    }
+    while (_iter.valid()) {
+        std::exception_ptr ex;
+        try {
+            auto val = serde::from_iobuf<extent_row_value>(_iter.value());
+            co_yield extent_row{
+              .key = ss::sstring(_iter.key()),
+              .val = val,
+            };
+            if (_iter.key() == _last_key) {
+                co_return;
+            }
+            if (_iter.key() > _last_key) {
+                co_yield std::unexpected(errc::corruption);
+                co_return;
+            }
+            co_await _iter.next();
+        } catch (...) {
+            ex = std::current_exception();
+        }
+        if (ex) {
+            co_yield std::unexpected(to_errc(ex));
+            co_return;
+        }
+    }
+}
+
+ss::future<std::expected<
+  std::optional<state_reader::extent_key_range>,
+  state_reader::errc>>
 state_reader::get_extent_range(
   const model::topic_id_partition& tidp,
   kafka::offset base,
@@ -148,35 +189,52 @@ state_reader::get_extent_range(
     ss::sstring base_key;
     ss::sstring last_key;
     iobuf last_val_buf;
+    std::optional<lsm::iterator> iter_opt;
+    auto iter_res = co_await get_tp_iter_ge<extent_row_key>(tidp, base);
+    if (!iter_res.has_value()) {
+        co_return std::unexpected(iter_res.error());
+    }
+    if (
+      !iter_res.value().has_value()
+      || iter_res.value()->key.base_offset != base) {
+        co_return std::nullopt;
+    }
+    auto& iter = iter_res.value()->iter;
+    base_key = ss::sstring(iter.key());
     try {
-        auto iter = co_await snap_.create_iterator();
-        co_await iter.seek(extent_row_key::encode(tidp, base));
+        co_await iter.seek(
+          extent_row_key::encode(tidp, kafka::next_offset(last)));
         if (!iter.valid()) {
-            co_return std::nullopt;
+            co_await iter.seek_to_last();
+        } else {
+            co_await iter.prev();
         }
         auto key = extent_row_key::decode(iter.key());
-        if (!key.has_value() || key->tidp != tidp || key->base_offset != base) {
-            // TODO: it's possible this isn't a key at all, in which case this
-            // could be some flavor of corruption!
+        if (!iter.valid() || key->tidp != tidp) {
             co_return std::nullopt;
         }
+        last_key = ss::sstring(iter.key());
         last_val_buf = iter.value();
+        iter_opt = std::move(iter);
     } catch (...) {
         co_return std::unexpected(to_errc(std::current_exception()));
     }
     try {
         auto val = serde::from_iobuf<extent_row_value>(std::move(last_val_buf));
-        auto key = extent_row_key::decode(iter.key());
         if (val.last_offset != last) {
             co_return std::nullopt;
         }
     } catch (...) {
         co_return std::unexpected(errc::corruption);
     }
-    co_return extent_key_range{
-      .base_key = std::move(base_key),
-      .last_key = std::move(last_key),
-    };
+    // Position iterator back at base_key for the caller
+    try {
+        co_await iter_opt->seek(base_key);
+    } catch (...) {
+        co_return std::unexpected(to_errc(std::current_exception()));
+    }
+    co_return extent_key_range(
+      std::move(base_key), std::move(last_key), std::move(*iter_opt));
 }
 
 template<typename KeyT, typename ValT, typename... KeyEncodeArgs>
@@ -198,7 +256,6 @@ state_reader::get_val(KeyEncodeArgs... args) {
         co_return std::unexpected(errc::corruption);
     }
 }
-} // namespace cloud_topics::l1
 
 template<typename KeyT, typename... KeyEncodeOtherArgs>
 ss::future<std::expected<
@@ -225,3 +282,4 @@ state_reader::get_tp_iter_ge(
     }
 }
 
+} // namespace cloud_topics::l1

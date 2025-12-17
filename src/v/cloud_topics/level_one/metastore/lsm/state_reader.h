@@ -16,11 +16,6 @@
 
 namespace cloud_topics::l1 {
 
-struct extent_key_range {
-    ss::sstring base_key;
-    ss::sstring last_key;
-};
-
 // Encapsulate queries that operate on state in a database.
 class state_reader {
 public:
@@ -30,8 +25,34 @@ public:
         shutting_down,
     };
 
-    explicit state_reader(lsm::database& db)
-      : db_(db) {}
+    struct extent_row {
+        ss::sstring key;
+        extent_row_value val;
+    };
+    class extent_key_range {
+    public:
+        extent_key_range(ss::sstring base, ss::sstring last, lsm::iterator it)
+          : _base_key(std::move(base))
+          , _last_key(std::move(last))
+          , _iter(std::move(it)) {}
+
+        // Returns extent_rows matching exactly between _base_key and
+        // _last_key, or generates an error if it can't.
+        //
+        // Stops generating after the first error.
+        ss::coroutine::experimental::generator<std::expected<extent_row, errc>>
+        get_rows();
+
+    private:
+        ss::sstring _base_key;
+        ss::sstring _last_key;
+
+        // Snapshot of the database.
+        lsm::iterator _iter;
+    };
+
+    explicit state_reader(lsm::snapshot snap)
+      : snap_(std::move(snap)) {}
 
     ss::future<std::expected<std::optional<metadata_row_value>, errc>>
     get_metadata(const model::topic_id_partition&);
