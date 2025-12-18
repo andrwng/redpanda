@@ -10,6 +10,7 @@
 #pragma once
 
 #include "cloud_topics/level_one/common/object_id.h"
+#include "cloud_topics/level_one/metastore/domain_uuid.h"
 #include "cloud_topics/level_one/metastore/offset_interval_set.h"
 #include "cloud_topics/level_one/metastore/state_update.h"
 #include "model/fundamental.h"
@@ -352,6 +353,23 @@ struct get_compaction_infos_request
 
     model::partition_id metastore_partition;
     chunked_vector<get_compaction_info_request> logs;
+};
+
+struct restore_domain_reply
+  : serde::envelope<
+      restore_domain_reply,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    errc ec;
+};
+struct restore_domain_request
+  : serde::envelope<
+      restore_domain_request,
+      serde::version<0>,
+      serde::compat_version<0>> {
+    using resp_t = restore_domain_reply;
+    auto serde_fields() { return std::tie(new_uuid); }
+    domain_uuid new_uuid;
 };
 
 } //  namespace cloud_topics::l1::rpc

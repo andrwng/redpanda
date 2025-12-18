@@ -16,6 +16,8 @@
 #include "cloud_topics/logger.h"
 #include "config/configuration.h"
 #include "container/chunked_hash_map.h"
+#include "lsm/io/cloud_persistence.h"
+#include "lsm/proto/manifest.proto.h"
 #include "model/batch_builder.h"
 #include "ssx/future-util.h"
 #include "ssx/sleep_abortable.h"
@@ -515,6 +517,77 @@ ss::future<> db_domain_manager::gc_loop() {
         }
     }
     vlog(cd_log.debug, "Garbage collection loop stopped...");
+}
+
+ss::future<rpc::restore_domain_reply>
+db_domain_manager::restore_domain(rpc::restore_domain_request req) {
+    auto gate_res = maybe_gate();
+    if (!gate_res.has_value()) {
+        co_return rpc::restore_domain_reply{
+          .ec = rpc::errc::not_leader,
+        };
+    }
+    auto init_db_res = co_await maybe_init_db();
+    if (!init_db_res.has_value()) {
+        // XXX: different code? Likely shutting down but unclear.
+        co_return rpc::restore_domain_reply{
+          .ec = rpc::errc::not_leader,
+        };
+    }
+    if (db_->get_domain_uuid() == req.new_uuid) {
+        co_return rpc::restore_domain_reply{
+          .ec = rpc::errc::ok,
+        };
+    }
+
+    auto lock_res = co_await unique_db_lock();
+    if (!lock_res.has_value()) {
+        co_return rpc::restore_domain_reply{
+          .ec = rpc::errc::not_leader,
+        };
+    }
+
+    cloud_storage_clients::object_key domain_prefix{
+      fmt::format("{}", req.new_uuid)};
+    auto meta_persist = co_await lsm::io::open_cloud_metadata_persistence(
+      remote, bucket, domain_prefix);
+    // When reading the manifest this will find the latest manifest at or below
+    // the given epoch. So to find the latest, supply the max epoch.
+    auto manifest_res = co_await meta_persist->read_manifest(
+      lsm::internal::database_epoch::max());
+    iobuf manifest_buf;
+    std::optional<lsm::proto::manifest> manifest;
+    if (manifest_res.has_value()) {
+        manifest_buf = std::move(manifest_res.value());
+        manifest = co_await lsm::proto::manifest::from_proto(
+          manifest_buf.copy());
+    }
+    // XXX: change to use val from manifest
+    auto reset_res = co_await db_->reset(req.new_uuid, std::move(manifest));
+    if (!reset_res.has_value()) {
+        co_return rpc::restore_domain_reply{
+          .ec = rpc::errc::not_leader,
+        };
+    }
+    co_await db_->close();
+    db_.reset();
+    lock_res->return_all();
+
+    init_db_res = co_await maybe_init_db();
+    if (!init_db_res.has_value()) {
+        // XXX: different code? Likely shutting down but unclear.
+        co_return rpc::restore_domain_reply{
+          .ec = rpc::errc::not_leader,
+        };
+    }
+    if (db_->get_domain_uuid() != req.new_uuid) {
+        co_return rpc::restore_domain_reply{
+          .ec = rpc::errc::concurrent_requests,
+        };
+    }
+    co_return rpc::restore_domain_reply{
+      .ec = rpc::errc::ok,
+    };
 }
 
 } // namespace cloud_topics::l1

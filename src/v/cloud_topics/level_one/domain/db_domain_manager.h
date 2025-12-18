@@ -69,6 +69,9 @@ public:
     ss::future<rpc::get_compaction_infos_reply>
       get_compaction_infos(rpc::get_compaction_infos_request);
 
+    ss::future<rpc::restore_domain_reply>
+      restore_domain(rpc::restore_domain_request);
+
 private:
     enum class errc {
         db_error,
