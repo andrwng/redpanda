@@ -189,4 +189,17 @@ ss::future<> write_async(iobuf& out, T t) {
     }
 }
 
+template<typename T>
+ss::future<iobuf> to_iobuf_async(T&& t) {
+    iobuf b;
+    co_await write_async(b, std::forward<T>(t));
+    co_return b;
+}
+
+template<typename T>
+ss::future<T> from_iobuf_async(iobuf b) {
+    auto in = iobuf_parser{std::move(b)};
+    return read_async<T>(in);
+}
+
 } // namespace serde
