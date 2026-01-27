@@ -13,7 +13,7 @@
 #include "bytes/iostream.h"
 #include "bytes/streambuf.h"
 #include "cloud_storage/logger.h"
-#include "cloud_storage/remote_path_provider.h"
+#include "cloud_storage/topic_path_provider.h"
 #include "cloud_storage/types.h"
 #include "json/encodings.h"
 #include "json/istreamwrapper.h"
@@ -448,7 +448,7 @@ ss::sstring topic_manifest::display_name() const {
 }
 
 remote_manifest_path topic_manifest::get_manifest_path(
-  const remote_path_provider& path_provider) const {
+  const topic_path_provider& path_provider) const {
     vassert(_topic_config, "Topic config is not set");
     return remote_manifest_path{
       path_provider.topic_manifest_path(_topic_config->tp_ns, _rev)};

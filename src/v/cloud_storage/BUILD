@@ -31,12 +31,114 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "base_manifest",
+    srcs = [
+        "base_manifest.cc",
+    ],
+    hdrs = [
+        "base_manifest.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":types",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/bytes:iostream",
+        "//src/v/model",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "topic_path_utils",
+    srcs = [
+        "topic_path_utils.cc",
+    ],
+    hdrs = [
+        "topic_path_utils.h",
+    ],
+    implementation_deps = [
+        "//src/v/hashing:xx",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":remote_label",
+        "//src/v/base",
+        "//src/v/container:chunked_vector",
+        "//src/v/model",
+        "@fmt",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "fwd",
+    hdrs = [
+        "fwd.h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+redpanda_cc_library(
+    name = "topic_path_provider",
+    srcs = [
+        "topic_path_provider.cc",
+    ],
+    hdrs = [
+        "topic_path_provider.h",
+    ],
+    implementation_deps = [
+        ":topic_path_utils",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":remote_label",
+        "//src/v/model",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "topic_manifest",
+    srcs = [
+        "topic_manifest.cc",
+    ],
+    hdrs = [
+        "topic_manifest.h",
+    ],
+    implementation_deps = [
+        ":logger",
+        "//src/v/bytes:iostream",
+        "//src/v/bytes:streambuf",
+        "//src/v/json",
+        "//src/v/serde:iobuf",
+        "@boost//:lexical_cast",
+        "@fmt",
+        "@rapidjson",
+    ],
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        ":base_manifest",
+        ":fwd",
+        ":topic_path_provider",
+        ":types",
+        "//src/v/base",
+        "//src/v/cluster:topic_configuration",
+        "//src/v/model",
+        "//src/v/serde",
+        "//src/v/utils:named_type",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
     name = "cloud_storage",
     srcs = [
         "anomalies_detector.cc",
         "async_manifest_materializer.cc",
         "async_manifest_view.cc",
-        "base_manifest.cc",
         "configuration.cc",
         "download_exception.cc",
         "inventory/aws_ops.cc",
@@ -79,7 +181,6 @@ redpanda_cc_library(
         "anomalies_detector.h",
         "async_manifest_materializer.h",
         "async_manifest_view.h",
-        "base_manifest.h",
         "configuration.h",
         "download_exception.h",
         "fwd.h",
@@ -127,10 +228,12 @@ redpanda_cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":base_manifest",
         ":logger",
         ":remote_label",
         ":segment_meta_cstore",
         ":topic_mount_manifest_path",
+        ":topic_path_provider",
         ":types",
         "//src/v/base",
         "//src/v/bytes:iobuf",
