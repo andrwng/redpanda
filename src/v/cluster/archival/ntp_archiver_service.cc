@@ -20,6 +20,7 @@
 #include "cloud_storage/remote_segment_index.h"
 #include "cloud_storage/spillover_manifest.h"
 #include "cloud_storage/topic_manifest.h"
+#include "cloud_storage/topic_manifest_uploader.h"
 #include "cloud_storage/tx_range_manifest.h"
 #include "cloud_storage/types.h"
 #include "cloud_storage_clients/types.h"
@@ -846,44 +847,35 @@ ss::future<> ntp_archiver::upload_topic_manifest() {
         co_return;
     }
 
-    auto& topic_cfg = *topic_cfg_opt;
-
-    vlog(
-      _rtclog.debug,
-      "Uploading topic manifest for {}, topic config {}",
-      _parent.ntp(),
-      topic_cfg);
+    vlog(_rtclog.info, "Uploading topic manifest for {}", _parent.ntp());
 
     auto replication_factor = cluster::replication_factor(
       _parent.raft()->config().current_config().voters.size());
 
-    try {
-        retry_chain_node fib(
-          _conf->manifest_upload_timeout(),
-          _conf->cloud_storage_initial_backoff(),
-          &_rtcnode);
-        retry_chain_logger ctxlog(archival_log, fib);
-        vlog(ctxlog.info, "Uploading topic manifest {}", _parent.ntp());
-        auto cfg_copy = topic_cfg.get();
-        cfg_copy.replication_factor = replication_factor;
-        cloud_storage::topic_manifest tm(cfg_copy, _rev);
-        auto key = tm.get_manifest_path(remote_path_provider());
-        vlog(ctxlog.debug, "Topic manifest object key is '{}'", key);
-        auto res = co_await _remote.upload_manifest(
-          _conf->bucket_name, tm, key, fib);
-        if (res != cloud_storage::upload_result::success) {
-            vlog(ctxlog.warn, "Topic manifest upload failed: {}", key);
-        } else {
-            _topic_manifest_dirty = false;
-        }
-    } catch (const ss::gate_closed_exception&) {
-    } catch (const ss::abort_requested_exception&) {
-    } catch (...) {
-        vlog(
-          _rtclog.warn,
-          "Error writing topic manifest for {}: {}",
+    auto cfg_copy = topic_cfg_opt->get();
+    cfg_copy.replication_factor = replication_factor;
+
+    cloud_storage::topic_manifest_uploader uploader(
+      archival_log, get_bucket_name(), _remote);
+
+    retry_chain_node fib(
+      _conf->manifest_upload_timeout(),
+      _conf->cloud_storage_initial_backoff(),
+      &_rtcnode);
+    auto res = co_await uploader.upload_manifest(
+      remote_path_provider(), cfg_copy, _rev, fib);
+    if (res.has_value()) {
+        _topic_manifest_dirty = false;
+    } else {
+        using errc = cloud_storage::topic_manifest_uploader::errc;
+        auto lvl = res.error().e == errc::shutting_down ? ss::log_level::debug
+                                                        : ss::log_level::warn;
+        vlogl(
+          _rtclog,
+          lvl,
+          "Topic manifest upload failed for {}: {}",
           _parent.ntp(),
-          std::current_exception());
+          res.error());
     }
 }
 

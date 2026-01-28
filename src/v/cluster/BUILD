@@ -707,6 +707,7 @@ redpanda_cc_library(
         "//src/v/cloud_storage:base_manifest",
         "//src/v/cloud_storage:remote_label",
         "//src/v/cloud_storage:topic_manifest",
+        "//src/v/cloud_storage:topic_manifest_uploader",
         "//src/v/cloud_storage:topic_mount_manifest_path",
         "//src/v/cloud_storage:types",
         "//src/v/cloud_storage_clients",

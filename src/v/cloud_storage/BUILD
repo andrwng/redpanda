@@ -134,6 +134,32 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "topic_manifest_uploader",
+    srcs = [
+        "topic_manifest_uploader.cc",
+    ],
+    hdrs = [
+        "topic_manifest_uploader.h",
+    ],
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        ":remote",
+        ":topic_manifest",
+        ":topic_path_provider",
+        ":types",
+        "//src/v/cluster:topic_configuration",
+        "//src/v/model",
+        "//src/v/ssx:future_util",
+        "//src/v/utils:detailed_error",
+        "//src/v/utils:retry_chain_node",
+        "@fmt",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
     name = "cloud_storage",
     srcs = [
         "anomalies_detector.cc",
