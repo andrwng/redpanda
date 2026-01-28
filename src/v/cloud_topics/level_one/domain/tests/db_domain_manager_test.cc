@@ -152,12 +152,22 @@ term_state_update_t make_terms(
 
 } // namespace
 
+struct test_params {
+    bool with_flush_loop{false};
+};
+
 class DbDomainManagerTest
   : public raft::raft_fixture
   , public s3_imposter_fixture {
 public:
     static constexpr auto num_nodes = 3;
     using opt_ref = std::optional<std::reference_wrapper<domain_manager_node>>;
+
+    virtual test_params params() const {
+        return {
+          .with_flush_loop = false,
+        };
+    }
 
     void SetUp() override {
         ss::smp::invoke_on_all([] {
@@ -350,6 +360,26 @@ public:
         }
     }
 
+    ss::future<> flusher_loop(domain_manager_node& node, bool& done) {
+        while (!done) {
+            std::vector<db_domain_manager*> managers;
+            std::vector<ss::future<l1_rpc::flush_domain_reply>> futs;
+            managers.reserve(node.managers.size());
+            for (auto& mgr : node.managers) {
+                managers.emplace_back(mgr.get());
+            }
+            for (auto* mgr : managers) {
+                l1_rpc::flush_domain_request req{
+                  .metastore_partition = model::partition_id(0),
+                };
+                futs.emplace_back(mgr->flush_domain(req));
+                co_await ss::maybe_yield();
+            }
+            co_await ss::when_all_succeed(std::move(futs));
+            co_await random_sleep_ms(100);
+        }
+    }
+
     using exact_next = ss::bool_class<struct exact_next_tag>;
     void validate_metadata(
       const model::topic_id_partition& tp,
@@ -404,7 +434,15 @@ public:
     db_domain_manager* initial_manager{nullptr};
 };
 
-TEST_F(DbDomainManagerTest, TestConcurrentUpdates) {
+class DbDomainManagerTestWithParams
+  : public DbDomainManagerTest
+  , public ::testing::WithParamInterface<test_params> {
+public:
+    test_params params() const override { return GetParam(); }
+};
+
+TEST_P(DbDomainManagerTestWithParams, TestConcurrentUpdates) {
+    auto args = params();
     auto tp = make_tp();
     bool done = false;
     std::vector<ss::future<>> futs;
@@ -417,6 +455,9 @@ TEST_F(DbDomainManagerTest, TestConcurrentUpdates) {
             futs.emplace_back(extent_validator_loop(*node, tp, done));
             futs.emplace_back(
               replacer_loop(*node, tp, expected_add_next, done));
+            if (args.with_flush_loop) {
+                futs.emplace_back(flusher_loop(*node, done));
+            }
         }
     }
     for (int i = 0; i < 10; ++i) {
@@ -447,7 +488,8 @@ TEST_F(DbDomainManagerTest, TestConcurrentUpdates) {
     validate_metadata(tp, kafka::offset(0), expected_add_next, exact_next::no);
 }
 
-TEST_F(DbDomainManagerTest, TestUpdatesWithDroppedAppends) {
+TEST_P(DbDomainManagerTestWithParams, TestUpdatesWithDroppedAppends) {
+    auto args = params();
     auto tp = make_tp();
     bool done = false;
     std::vector<ss::future<>> futs;
@@ -460,6 +502,9 @@ TEST_F(DbDomainManagerTest, TestUpdatesWithDroppedAppends) {
             futs.emplace_back(extent_validator_loop(*node, tp, done));
             futs.emplace_back(
               replacer_loop(*node, tp, expected_add_next, done));
+            if (args.with_flush_loop) {
+                futs.emplace_back(flusher_loop(*node, done));
+            }
         }
     }
     for (int i = 0; i < 3; ++i) {
@@ -509,6 +554,17 @@ TEST_F(DbDomainManagerTest, TestUpdatesWithDroppedAppends) {
     // adder_loop isn't very strict with its accounting.
     validate_metadata(tp, kafka::offset(0), expected_add_next, exact_next::no);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+  WithFlushLoop,
+  DbDomainManagerTestWithParams,
+  ::testing::Values(
+    test_params{
+      .with_flush_loop = false,
+    },
+    test_params{
+      .with_flush_loop = true,
+    }));
 
 TEST_F(DbDomainManagerTest, TestBasicAddObjects) {
     auto tp = make_tp();
