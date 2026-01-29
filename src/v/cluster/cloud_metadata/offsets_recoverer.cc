@@ -22,6 +22,7 @@
 #include "model/namespace.h"
 #include "rpc/connection_cache.h"
 
+#include <seastar/core/fstream.hh>
 #include <seastar/core/lowres_clock.hh>
 #include <seastar/core/timed_out_error.hh>
 

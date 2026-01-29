@@ -15,21 +15,17 @@
 #include "cloud_storage/base_manifest.h"
 #include "cloud_storage/configuration.h"
 #include "cloud_storage/fwd.h"
-#include "cloud_storage/read_path_probes.h"
 #include "cloud_storage/remote_probe.h"
-#include "cloud_storage/remote_segment_index.h"
 #include "cloud_storage/types.h"
 #include "cloud_storage_clients/client.h"
-#include "cloud_storage_clients/client_pool.h"
 #include "cloud_storage_clients/types.h"
 #include "container/intrusive_list_helpers.h"
-#include "model/metadata.h"
-#include "random/simple_time_jitter.h"
 #include "utils/lazy_abort_source.h"
 #include "utils/retry_chain_node.h"
 #include "utils/stream_provider.h"
 
 #include <seastar/core/abort_source.hh>
+#include <seastar/core/file.hh>
 #include <seastar/core/gate.hh>
 #include <seastar/core/loop.hh>
 
@@ -39,6 +35,7 @@
 namespace cloud_storage {
 
 class materialized_resources;
+class offset_index;
 
 inline constexpr ss::shard_id auth_refresh_shard_id = 0;
 

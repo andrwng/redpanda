@@ -13,6 +13,7 @@
 #include "bytes/streambuf.h"
 #include "cloud_storage/logger.h"
 #include "cloud_storage/remote.h"
+#include "json/document.h"
 #include "json/istreamwrapper.h"
 #include "re2/re2.h"
 #include "ssx/future-util.h"

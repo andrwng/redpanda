@@ -366,3 +366,64 @@ redpanda_cc_library(
         "@seastar",
     ],
 )
+
+redpanda_cc_library(
+    name = "configuration",
+    srcs = [
+        "configuration.cc",
+    ],
+    hdrs = [
+        "configuration.h",
+    ],
+    implementation_deps = [
+        ":logger",
+        "//src/v/base",
+        "//src/v/config",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":types",
+        "//src/v/cloud_roles",
+        "//src/v/cloud_storage_clients",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "remote_probe",
+    hdrs = [
+        "remote_probe.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":types",
+        "//src/v/base",
+        "//src/v/metrics",
+        "//src/v/utils:log_hist",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "remote",
+    hdrs = [
+        "remote.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":base_manifest",
+        ":configuration",
+        ":fwd",
+        ":remote_probe",
+        ":types",
+        "//src/v/cloud_io:io_resources",
+        "//src/v/cloud_io:remote",
+        "//src/v/cloud_storage_clients",
+        "//src/v/container:intrusive",
+        "//src/v/utils:lazy_abort_source",
+        "//src/v/utils:retry_chain_node",
+        "//src/v/utils:stream_provider",
+        "@abseil-cpp//absl/container:node_hash_set",
+        "@seastar",
+    ],
+)

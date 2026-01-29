@@ -15,12 +15,9 @@
 #include "cloud_storage/base_manifest.h"
 #include "cloud_storage/logger.h"
 #include "cloud_storage/materialized_resources.h"
+#include "cloud_storage/remote_segment_index.h"
 #include "cloud_storage/types.h"
-#include "cloud_storage_clients/client_pool.h"
 #include "cloud_storage_clients/types.h"
-#include "cloud_storage_clients/util.h"
-#include "model/metadata.h"
-#include "ssx/future-util.h"
 #include "ssx/semaphore.h"
 #include "utils/retry_chain_node.h"
 
@@ -39,7 +36,6 @@
 #include <boost/range/irange.hpp>
 #include <fmt/chrono.h>
 
-#include <exception>
 #include <iterator>
 #include <utility>
 #include <variant>

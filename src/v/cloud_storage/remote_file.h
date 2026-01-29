@@ -13,6 +13,7 @@
 #include "cloud_storage/logger.h"
 #include "cloud_storage/remote.h"
 #include "cloud_storage_clients/types.h"
+#include "random/simple_time_jitter.h"
 #include "utils/retry_chain_node.h"
 
 namespace cloud_storage {
