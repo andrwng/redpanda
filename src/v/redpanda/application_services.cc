@@ -705,7 +705,8 @@ void application::wire_up_redpanda_services(
             &metadata_cache,
             &_connection_cache,
             bucket_name.value(),
-            &storage)
+            &storage,
+            &cloud_storage_api)
           .get();
     }
 

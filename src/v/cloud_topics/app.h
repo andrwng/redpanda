@@ -28,6 +28,7 @@ class remote;
 } // namespace cloud_io
 namespace cloud_storage {
 class cache;
+class remote;
 } // namespace cloud_storage
 namespace storage {
 class api;
@@ -38,6 +39,7 @@ class data_plane_api;
 class cloud_topics_manager;
 class level_zero_gc;
 class housekeeper_manager;
+class topic_manifest_upload_manager;
 
 namespace l1 {
 class topic_purger_manager;
@@ -63,7 +65,8 @@ public:
       ss::sharded<cluster::metadata_cache>*,
       ss::sharded<rpc::connection_cache>*,
       cloud_storage_clients::bucket_name,
-      ss::sharded<storage::api>*);
+      ss::sharded<storage::api>*,
+      ss::sharded<cloud_storage::remote>*);
 
     ss::future<> start();
 
@@ -94,6 +97,7 @@ private:
     ss::sharded<cloud_topics_manager> manager;
     ss::sharded<level_zero_gc> l0_gc;
     ss::sharded<housekeeper_manager> housekeeper_manager;
+    ss::sharded<topic_manifest_upload_manager> topic_manifest_upload_mgr;
     std::unique_ptr<l1::compaction_scheduler> compaction_scheduler;
 };
 

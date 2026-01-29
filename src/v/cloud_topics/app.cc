@@ -19,6 +19,7 @@
 #include "cloud_topics/level_zero/gc/level_zero_gc.h"
 #include "cloud_topics/manager/manager.h"
 #include "cloud_topics/reconciler/reconciler.h"
+#include "cloud_topics/topic_manifest_upload_manager.h"
 #include "cluster/cluster_epoch_service.h"
 #include "cluster/controller.h"
 #include "config/node_config.h"
@@ -44,7 +45,8 @@ ss::future<> app::construct(
   ss::sharded<cluster::metadata_cache>* metadata_cache,
   ss::sharded<rpc::connection_cache>* connection_cache,
   cloud_storage_clients::bucket_name bucket,
-  ss::sharded<storage::api>* storage) {
+  ss::sharded<storage::api>* storage,
+  ss::sharded<cloud_storage::remote>* cs_remote) {
     data_plane = co_await make_data_plane(
       ssx::sformat("{}::data_plane", _logger_name),
       remote,
@@ -114,6 +116,9 @@ ss::future<> app::construct(
                                    return &replicated_metastore.local();
                                }));
 
+    co_await construct_service(
+      topic_manifest_upload_mgr, std::ref(*cs_remote), bucket);
+
     construct_single_service(
       compaction_scheduler,
       l1::compaction_cluster_state{
@@ -142,6 +147,8 @@ ss::future<> app::start() {
     co_await domain_supervisor.invoke_on_all(
       [](auto& ds) { return ds.start(); });
     co_await housekeeper_manager.invoke_on_all(&housekeeper_manager::start);
+    co_await topic_manifest_upload_mgr.invoke_on_all(
+      &topic_manifest_upload_manager::start);
     co_await compaction_scheduler->start();
 
     // When start is called, we must have registered all the callbacks before
@@ -216,6 +223,19 @@ ss::future<> app::wire_up_notifications() {
                                               auto partition) noexcept {
             ds.on_domain_leadership_change(ntp, std::move(partition));
         });
+    });
+    co_await topic_manifest_upload_mgr.invoke_on_all([this](auto& mgr) {
+        manager.local().on_ctp_leader_properties_change(
+          [&mgr](
+            const model::ntp& ntp,
+            const model::topic_id_partition& tidp,
+            auto partition) noexcept {
+              if (ntp.tp.partition != model::partition_id{0}) {
+                  return;
+              }
+              mgr.on_leadership_or_properties_change(
+                tidp, std::move(partition));
+          });
     });
 }
 
