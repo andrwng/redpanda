@@ -74,3 +74,20 @@ redpanda_cc_gtest(
         "@googletest//:gtest",
     ],
 )
+
+redpanda_cc_gtest(
+    name = "topic_manifest_uploader_test",
+    timeout = "short",
+    srcs = ["topic_manifest_uploader_test.cc"],
+    cpu = 1,
+    deps = [
+        ":cluster_fixture",
+        "//src/v/base",
+        "//src/v/cloud_storage:topic_manifest",
+        "//src/v/cloud_storage:topic_manifest_downloader",
+        "//src/v/cluster",
+        "//src/v/test_utils:gtest",
+        "//src/v/test_utils:scoped_config",
+        "@googletest//:gtest",
+    ],
+)
