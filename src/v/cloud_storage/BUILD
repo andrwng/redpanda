@@ -160,6 +160,31 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "topic_manifest_downloader",
+    srcs = ["topic_manifest_downloader.cc"],
+    hdrs = ["topic_manifest_downloader.h"],
+    implementation_deps = [
+        ":logger",
+        ":topic_path_utils",
+        "//src/v/hashing:xx",
+        "@abseil-cpp//absl/container:btree",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":remote",
+        ":remote_label",
+        ":topic_manifest",
+        ":types",
+        "//src/v/base",
+        "//src/v/cloud_storage_clients",
+        "//src/v/container:chunked_vector",
+        "//src/v/model",
+        "//src/v/utils:retry_chain_node",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
     name = "cloud_storage",
     srcs = [
         "anomalies_detector.cc",
