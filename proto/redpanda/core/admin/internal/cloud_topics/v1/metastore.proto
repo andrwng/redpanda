@@ -72,6 +72,31 @@ service MetastoreService {
             authz: SUPERUSER
         };
     }
+
+    // Get per-partition summary statistics from the metastore.
+    rpc GetPartitionSummary(GetPartitionSummaryRequest)
+        returns (GetPartitionSummaryResponse) {
+        option (pbgen.rpc) = {
+            authz: SUPERUSER
+        };
+    }
+
+    // Dump full partition state including all extents, terms, compaction,
+    // and optionally object metadata.
+    rpc DumpPartitionState(DumpPartitionStateRequest)
+        returns (DumpPartitionStateResponse) {
+        option (pbgen.rpc) = {
+            authz: SUPERUSER
+        };
+    }
+
+    // Check metastore structural invariants for partitions.
+    rpc CheckPartitionInvariants(CheckPartitionInvariantsRequest)
+        returns (CheckPartitionInvariantsResponse) {
+        option (pbgen.rpc) = {
+            authz: SUPERUSER
+        };
+    }
 }
 
 // GetOffsetsRequest is the request for looking up the offsets in the metastore
@@ -149,4 +174,133 @@ message LsmFile {
     string smallest_key_info = 4;
     // Largest key in the file (human-readable string representation).
     string largest_key_info = 5;
+}
+
+// --- Feature 1: Partition Summary ---
+
+message GetPartitionSummaryRequest {
+    uint32 metastore_partition = 1;
+    repeated common.v1.TopicPartition partitions = 2;
+}
+
+message GetPartitionSummaryResponse {
+    repeated PartitionSummary partitions = 1;
+}
+
+message PartitionSummary {
+    string topic_id = 1;
+    int32 partition_id = 2;
+    int64 start_offset = 3;
+    int64 next_offset = 4;
+    int64 compaction_epoch = 5;
+    uint64 extent_count = 6;
+    int64 extent_min_offset = 7;
+    int64 extent_max_offset = 8;
+    uint64 total_extent_data_size = 9;
+    uint64 term_count = 10;
+    int64 min_term_id = 11;
+    int64 max_term_id = 12;
+    int64 min_term_start_offset = 13;
+    int64 max_term_start_offset = 14;
+    bool has_compaction_state = 15;
+    uint64 cleaned_range_count = 16;
+    uint64 tombstone_range_count = 17;
+}
+
+// --- Feature 2: Full Dump ---
+
+message DumpPartitionStateRequest {
+    uint32 metastore_partition = 1;
+    repeated common.v1.TopicPartition partitions = 2;
+    bool include_objects = 3;
+    bool check_object_existence = 4;
+}
+
+message DumpPartitionStateResponse {
+    repeated PartitionDump partitions = 1;
+    repeated ObjectInfo objects = 2;
+}
+
+message PartitionDump {
+    string topic_id = 1;
+    int32 partition_id = 2;
+    PartitionMetadata metadata = 3;
+    repeated ExtentInfo extents = 4;
+    repeated TermStartInfo term_starts = 5;
+    CompactionInfo compaction = 6;
+}
+
+message PartitionMetadata {
+    int64 start_offset = 1;
+    int64 next_offset = 2;
+    int64 compaction_epoch = 3;
+}
+
+message ExtentInfo {
+    int64 base_offset = 1;
+    int64 last_offset = 2;
+    int64 max_timestamp = 3;
+    uint64 filepos = 4;
+    uint64 len = 5;
+    string object_id = 6;
+}
+
+message TermStartInfo {
+    int64 term_id = 1;
+    int64 start_offset = 2;
+}
+
+message CompactionInfo {
+    repeated OffsetRange cleaned_ranges = 1;
+    repeated CleanedRangeWithTombstones cleaned_ranges_with_tombstones = 2;
+}
+
+message OffsetRange {
+    int64 base_offset = 1;
+    int64 last_offset = 2;
+}
+
+message CleanedRangeWithTombstones {
+    int64 base_offset = 1;
+    int64 last_offset = 2;
+    int64 cleaned_at_timestamp = 3;
+}
+
+message ObjectInfo {
+    string object_id = 1;
+    uint64 total_data_size = 2;
+    uint64 removed_data_size = 3;
+    uint64 footer_pos = 4;
+    uint64 object_size = 5;
+    ObjectExistence exists_in_cloud = 6;
+}
+
+enum ObjectExistence {
+    OBJECT_EXISTENCE_UNSPECIFIED = 0;
+    OBJECT_EXISTENCE_EXISTS = 1;
+    OBJECT_EXISTENCE_MISSING = 2;
+    OBJECT_EXISTENCE_CHECK_FAILED = 3;
+}
+
+// --- Feature 3: Invariant Checks ---
+
+message CheckPartitionInvariantsRequest {
+    uint32 metastore_partition = 1;
+    repeated common.v1.TopicPartition partitions = 2;
+    bool check_object_existence = 3;
+}
+
+message CheckPartitionInvariantsResponse {
+    repeated PartitionInvariantResult partitions = 1;
+}
+
+message PartitionInvariantResult {
+    string topic_id = 1;
+    int32 partition_id = 2;
+    repeated InvariantViolation violations = 3;
+}
+
+message InvariantViolation {
+    string check_name = 1;
+    string description = 2;
 }

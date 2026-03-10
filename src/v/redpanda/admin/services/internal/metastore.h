@@ -57,6 +57,22 @@ public:
         serde::pb::rpc::context,
         proto::admin::metastore::get_database_stats_request) override;
 
+    seastar::future<proto::admin::metastore::get_partition_summary_response>
+      get_partition_summary(
+        serde::pb::rpc::context,
+        proto::admin::metastore::get_partition_summary_request) override;
+
+    seastar::future<proto::admin::metastore::dump_partition_state_response>
+      dump_partition_state(
+        serde::pb::rpc::context,
+        proto::admin::metastore::dump_partition_state_request) override;
+
+    seastar::future<
+      proto::admin::metastore::check_partition_invariants_response>
+      check_partition_invariants(
+        serde::pb::rpc::context,
+        proto::admin::metastore::check_partition_invariants_request) override;
+
 private:
     admin::proxy::client _proxy_client;
     ss::sharded<cluster::topic_table>* _topic_table;
