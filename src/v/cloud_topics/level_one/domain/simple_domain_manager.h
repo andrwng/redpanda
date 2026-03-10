@@ -84,6 +84,18 @@ public:
     ss::future<rpc::preregister_objects_reply>
       preregister_objects(rpc::preregister_objects_request) override;
 
+    ss::future<
+      std::expected<chunked_vector<debug_reader::partition_summary>, rpc::errc>>
+      get_partition_summaries(
+        chunked_vector<model::topic_id_partition>) override;
+
+    ss::future<std::expected<dump_result, rpc::errc>> dump_partition_state(
+      chunked_vector<model::topic_id_partition>, bool, bool) override;
+
+    ss::future<std::expected<chunked_vector<invariant_check_result>, rpc::errc>>
+    check_partition_invariants(
+      chunked_vector<model::topic_id_partition>, bool) override;
+
 private:
     std::optional<ss::gate::holder> maybe_gate();
     ss::future<> gc_loop();

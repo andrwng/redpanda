@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include "cloud_topics/level_one/metastore/lsm/debug_reader.h"
 #include "cloud_topics/level_one/metastore/rpc_types.h"
 #include "container/chunked_vector.h"
 
@@ -106,6 +107,50 @@ public:
 
     virtual ss::future<rpc::preregister_objects_reply>
       preregister_objects(rpc::preregister_objects_request) = 0;
+
+    // Debug/inspection endpoints.
+
+    virtual ss::future<
+      std::expected<chunked_vector<debug_reader::partition_summary>, rpc::errc>>
+    get_partition_summaries(
+      chunked_vector<model::topic_id_partition> partitions)
+      = 0;
+
+    struct object_dump_entry {
+        object_id oid;
+        object_entry entry;
+        enum class existence {
+            unspecified,
+            exists,
+            missing,
+            check_failed,
+        };
+        existence exists_in_cloud{existence::unspecified};
+    };
+
+    struct dump_result {
+        chunked_vector<debug_reader::partition_dump> partitions;
+        chunked_vector<object_dump_entry> objects;
+    };
+
+    virtual ss::future<std::expected<dump_result, rpc::errc>>
+    dump_partition_state(
+      chunked_vector<model::topic_id_partition> partitions,
+      bool include_objects,
+      bool check_object_existence)
+      = 0;
+
+    struct invariant_check_result {
+        model::topic_id_partition tp;
+        chunked_vector<debug_reader::invariant_violation> violations;
+    };
+
+    virtual ss::future<
+      std::expected<chunked_vector<invariant_check_result>, rpc::errc>>
+    check_partition_invariants(
+      chunked_vector<model::topic_id_partition> partitions,
+      bool check_object_existence)
+      = 0;
 };
 
 } // namespace cloud_topics::l1

@@ -10,6 +10,7 @@ redpanda_cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "//src/v/cloud_topics/level_one/metastore:rpc_types",
+        "//src/v/cloud_topics/level_one/metastore/lsm:debug_reader",
     ],
 )
 
@@ -82,6 +83,7 @@ redpanda_cc_library(
     implementation_deps = [
         "//src/v/cloud_topics:logger",
         "//src/v/cloud_topics/level_one/common:object_id",
+        "//src/v/cloud_topics/level_one/metastore/lsm:debug_reader",
         "//src/v/cloud_topics/level_one/metastore/lsm:garbage_collector",
         "//src/v/cloud_topics/level_one/metastore/lsm:keys",
         "//src/v/cloud_topics/level_one/metastore/lsm:state_reader",

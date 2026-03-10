@@ -10,6 +10,7 @@
 #include "cloud_topics/level_one/domain/db_domain_manager.h"
 
 #include "cloud_topics/level_one/common/object_id.h"
+#include "cloud_topics/level_one/metastore/lsm/debug_reader.h"
 #include "cloud_topics/level_one/metastore/lsm/garbage_collector.h"
 #include "cloud_topics/level_one/metastore/lsm/keys.h"
 #include "cloud_topics/level_one/metastore/lsm/state_reader.h"
@@ -1395,6 +1396,152 @@ db_domain_manager::expire_preregistered_objects(chunked_vector<object_id> ids) {
           "Error writing preregistered object expiry rows: {}",
           write_res.error());
     }
+}
+
+ss::future<
+  std::expected<chunked_vector<debug_reader::partition_summary>, rpc::errc>>
+db_domain_manager::get_partition_summaries(
+  chunked_vector<model::topic_id_partition> partitions) {
+    auto gl_res = co_await gate_and_open_reads();
+    if (!gl_res.has_value()) {
+        co_return std::unexpected(gl_res.error());
+    }
+
+    auto reader = debug_reader(db_->db().create_snapshot());
+    if (partitions.empty()) {
+        auto all = co_await reader.get_all_partitions();
+        if (!all) {
+            co_return std::unexpected(
+              log_and_convert(all.error(), "get_all_partitions: "));
+        }
+        partitions = std::move(*all);
+    }
+    chunked_vector<debug_reader::partition_summary> result;
+    for (const auto& tp : partitions) {
+        auto summary = co_await reader.get_partition_summary(tp);
+        if (summary) {
+            result.push_back(std::move(*summary));
+        }
+    }
+    co_return result;
+}
+
+ss::future<std::expected<domain_manager::dump_result, rpc::errc>>
+db_domain_manager::dump_partition_state(
+  chunked_vector<model::topic_id_partition> partitions,
+  bool include_objects,
+  bool /*check_object_existence*/) {
+    auto gl_res = co_await gate_and_open_reads();
+    if (!gl_res.has_value()) {
+        co_return std::unexpected(gl_res.error());
+    }
+
+    auto reader = debug_reader(db_->db().create_snapshot());
+    if (partitions.empty()) {
+        auto all = co_await reader.get_all_partitions();
+        if (!all) {
+            co_return std::unexpected(
+              log_and_convert(all.error(), "get_all_partitions: "));
+        }
+        partitions = std::move(*all);
+    }
+
+    dump_result result;
+    chunked_hash_map<object_id, bool> seen_oids;
+
+    for (const auto& tp : partitions) {
+        auto dump = co_await reader.dump_partition(tp);
+        if (!dump) {
+            continue;
+        }
+        if (include_objects) {
+            for (const auto& ext : dump->extents) {
+                seen_oids[ext.oid] = true;
+            }
+        }
+        result.partitions.push_back(std::move(*dump));
+    }
+
+    if (include_objects && !seen_oids.empty()) {
+        chunked_vector<object_id> oid_list;
+        oid_list.reserve(seen_oids.size());
+        for (const auto& [oid, _] : seen_oids) {
+            oid_list.push_back(oid);
+        }
+        auto objects = co_await reader.get_objects(oid_list);
+        if (objects) {
+            for (auto& [oid, entry] : *objects) {
+                result.objects.push_back(
+                  object_dump_entry{
+                    .oid = oid,
+                    .entry = std::move(entry),
+                  });
+            }
+        }
+    }
+
+    co_return result;
+}
+
+ss::future<std::expected<
+  chunked_vector<domain_manager::invariant_check_result>,
+  rpc::errc>>
+db_domain_manager::check_partition_invariants(
+  chunked_vector<model::topic_id_partition> partitions,
+  bool /*check_object_existence*/) {
+    auto gl_res = co_await gate_and_open_reads();
+    if (!gl_res.has_value()) {
+        co_return std::unexpected(gl_res.error());
+    }
+
+    auto reader = debug_reader(db_->db().create_snapshot());
+    if (partitions.empty()) {
+        auto all = co_await reader.get_all_partitions();
+        if (!all) {
+            co_return std::unexpected(
+              log_and_convert(all.error(), "get_all_partitions: "));
+        }
+        partitions = std::move(*all);
+    }
+
+    chunked_vector<invariant_check_result> results;
+    for (const auto& tp : partitions) {
+        auto dump = co_await reader.dump_partition(tp);
+        if (!dump) {
+            continue;
+        }
+
+        auto violations = debug_reader::check_invariants(*dump);
+
+        // Collect objects for reference checks.
+        chunked_hash_map<object_id, object_entry> known_objects;
+        chunked_vector<object_id> oid_list;
+        for (const auto& ext : dump->extents) {
+            if (!known_objects.contains(ext.oid)) {
+                oid_list.push_back(ext.oid);
+                known_objects[ext.oid] = object_entry{};
+            }
+        }
+        auto objects = co_await reader.get_objects(oid_list);
+        if (objects) {
+            known_objects.clear();
+            for (auto& [oid, entry] : *objects) {
+                known_objects[oid] = std::move(entry);
+            }
+        }
+        auto obj_violations = debug_reader::check_object_references(
+          *dump, known_objects);
+        for (auto& v : obj_violations) {
+            violations.push_back(std::move(v));
+        }
+
+        results.push_back(
+          invariant_check_result{
+            .tp = tp,
+            .violations = std::move(violations),
+          });
+    }
+    co_return results;
 }
 
 } // namespace cloud_topics::l1

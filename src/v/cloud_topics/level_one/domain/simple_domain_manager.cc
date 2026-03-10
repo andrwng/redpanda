@@ -789,4 +789,25 @@ simple_domain_manager::get_database_stats() {
     co_return std::unexpected(rpc::errc::concurrent_requests);
 }
 
+ss::future<
+  std::expected<chunked_vector<debug_reader::partition_summary>, rpc::errc>>
+simple_domain_manager::get_partition_summaries(
+  chunked_vector<model::topic_id_partition>) {
+    co_return std::unexpected(rpc::errc::concurrent_requests);
+}
+
+ss::future<std::expected<domain_manager::dump_result, rpc::errc>>
+simple_domain_manager::dump_partition_state(
+  chunked_vector<model::topic_id_partition>, bool, bool) {
+    co_return std::unexpected(rpc::errc::concurrent_requests);
+}
+
+ss::future<std::expected<
+  chunked_vector<domain_manager::invariant_check_result>,
+  rpc::errc>>
+simple_domain_manager::check_partition_invariants(
+  chunked_vector<model::topic_id_partition>, bool) {
+    co_return std::unexpected(rpc::errc::concurrent_requests);
+}
+
 } // namespace cloud_topics::l1

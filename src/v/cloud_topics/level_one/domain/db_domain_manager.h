@@ -92,6 +92,21 @@ public:
     ss::future<rpc::preregister_objects_reply>
       preregister_objects(rpc::preregister_objects_request) override;
 
+    ss::future<
+      std::expected<chunked_vector<debug_reader::partition_summary>, rpc::errc>>
+    get_partition_summaries(
+      chunked_vector<model::topic_id_partition> partitions) override;
+
+    ss::future<std::expected<dump_result, rpc::errc>> dump_partition_state(
+      chunked_vector<model::topic_id_partition> partitions,
+      bool include_objects,
+      bool check_object_existence) override;
+
+    ss::future<std::expected<chunked_vector<invariant_check_result>, rpc::errc>>
+    check_partition_invariants(
+      chunked_vector<model::topic_id_partition> partitions,
+      bool check_object_existence) override;
+
 private:
     // Initializes the underlying database for the current term, potentially
     // reopening it if needed (e.g. the underlying Raft term has changed since
