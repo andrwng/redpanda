@@ -120,6 +120,30 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "debug_reader",
+    srcs = [
+        "debug_reader.cc",
+    ],
+    hdrs = [
+        "debug_reader.h",
+    ],
+    implementation_deps = [
+        ":keys",
+        "//src/v/cloud_topics:logger",
+        "//src/v/lsm/core:exceptions",
+        "//src/v/ssx:future_util",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":state_reader",
+        "//src/v/cloud_topics/level_one/metastore:state",
+        "//src/v/container:chunked_hash_map",
+        "//src/v/container:chunked_vector",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
     name = "state_reader",
     srcs = [
         "state_reader.cc",

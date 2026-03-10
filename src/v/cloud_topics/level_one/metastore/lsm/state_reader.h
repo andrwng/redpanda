@@ -186,6 +186,8 @@ private:
     get_val(KeyEncodeArgs...);
 
     lsm::snapshot snap_;
+
+    friend class debug_reader;
 };
 
 // Returns an object_key_range starting from the given object_id. If start_oid
