@@ -263,7 +263,7 @@ metastore_service_impl::get_partition_summary(
     proto::admin::metastore::get_partition_summary_response response;
     for (const auto& s : result_exp.value()) {
         proto::admin::metastore::partition_summary ps;
-        ps.set_topic_id(fmt::format("{}", s.tp.topic_id));
+        ps.set_topic_id(ss::sstring(uuid_t(s.tp.topic_id)));
         ps.set_partition_id(s.tp.partition());
         ps.set_start_offset(s.metadata.start_offset());
         ps.set_next_offset(s.metadata.next_offset());
@@ -342,7 +342,7 @@ metastore_service_impl::dump_partition_state(
     proto::admin::metastore::dump_partition_state_response response;
     for (const auto& pd : result_exp.value().partitions) {
         proto::admin::metastore::partition_dump dump_proto;
-        dump_proto.set_topic_id(fmt::format("{}", pd.tp.topic_id));
+        dump_proto.set_topic_id(ss::sstring(uuid_t(pd.tp.topic_id)));
         dump_proto.set_partition_id(pd.tp.partition());
 
         proto::admin::metastore::partition_metadata meta;
@@ -358,7 +358,7 @@ metastore_service_impl::dump_partition_state(
             ei.set_max_timestamp(ext.max_timestamp());
             ei.set_filepos(ext.filepos);
             ei.set_len(ext.len);
-            ei.set_object_id(fmt::format("{}", ext.oid));
+            ei.set_object_id(ss::sstring(uuid_t(ext.oid)));
             dump_proto.get_extents().push_back(std::move(ei));
         }
 
@@ -395,7 +395,7 @@ metastore_service_impl::dump_partition_state(
 
     for (const auto& obj : result_exp.value().objects) {
         proto::admin::metastore::object_info oi;
-        oi.set_object_id(fmt::format("{}", obj.oid));
+        oi.set_object_id(ss::sstring(uuid_t(obj.oid)));
         oi.set_total_data_size(obj.entry.total_data_size);
         oi.set_removed_data_size(obj.entry.removed_data_size);
         oi.set_footer_pos(obj.entry.footer_pos);
@@ -476,7 +476,7 @@ metastore_service_impl::check_partition_invariants(
     proto::admin::metastore::check_partition_invariants_response response;
     for (const auto& r : result_exp.value()) {
         proto::admin::metastore::partition_invariant_result pr;
-        pr.set_topic_id(fmt::format("{}", r.tp.topic_id));
+        pr.set_topic_id(ss::sstring(uuid_t(r.tp.topic_id)));
         pr.set_partition_id(r.tp.partition());
         for (const auto& v : r.violations) {
             proto::admin::metastore::invariant_violation iv;
