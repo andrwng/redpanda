@@ -78,11 +78,13 @@ debug_reader::get_all_partitions() {
     co_return result;
 }
 
-ss::future<std::expected<debug_reader::partition_summary, debug_reader::error>>
-debug_reader::get_partition_summary(const model::topic_id_partition& tp) {
-    partition_summary summary;
-    summary.tp = tp;
-
+template<typename ExtentFn, typename TermFn, typename CompactionFn>
+ss::future<std::expected<metadata_row_value, debug_reader::error>>
+debug_reader::for_each_partition_row(
+  const model::topic_id_partition& tp,
+  ExtentFn&& on_extent,
+  TermFn&& on_term,
+  CompactionFn&& on_compaction) {
     auto meta_res = co_await reader_.get_metadata(tp);
     if (!meta_res) {
         co_return std::unexpected(std::move(meta_res.error()));
@@ -91,9 +93,9 @@ debug_reader::get_partition_summary(const model::topic_id_partition& tp) {
         co_return std::unexpected(
           error(state_reader::errc::corruption, "No metadata for {}", tp));
     }
-    summary.metadata = *meta_res.value();
+    auto metadata = *meta_res.value();
 
-    // Iterate extents to accumulate counts/bounds/sizes.
+    // Iterate extents.
     auto extents_res = co_await reader_.get_inclusive_extents(
       tp, std::nullopt, std::nullopt);
     if (!extents_res) {
@@ -113,26 +115,19 @@ debug_reader::get_partition_summary(const model::topic_id_partition& tp) {
                   "Failed to decode extent key {}",
                   row.key));
             }
-            kafka::offset base = decoded_key->base_offset;
-            kafka::offset last = row.val.last_offset;
-
-            if (summary.extent_count == 0) {
-                summary.extent_min_offset = base;
-                summary.extent_max_offset = last;
-            } else {
-                if (base < summary.extent_min_offset) {
-                    summary.extent_min_offset = base;
-                }
-                if (last > summary.extent_max_offset) {
-                    summary.extent_max_offset = last;
-                }
-            }
-            summary.total_extent_data_size += row.val.len;
-            ++summary.extent_count;
+            on_extent(
+              extent{
+                .base_offset = decoded_key->base_offset,
+                .last_offset = row.val.last_offset,
+                .max_timestamp = row.val.max_timestamp,
+                .filepos = row.val.filepos,
+                .len = row.val.len,
+                .oid = row.val.oid,
+              });
         }
     }
 
-    // Iterate terms via raw key space for term_id and start_offset.
+    // Iterate terms.
     try {
         auto iter = co_await reader_.snap_.create_iterator();
         co_await iter.seek(term_row_key::encode(tp, model::term_id(0)));
@@ -142,13 +137,11 @@ debug_reader::get_partition_summary(const model::topic_id_partition& tp) {
                 break;
             }
             auto val = serde::from_iobuf<term_row_value>(iter.value());
-            if (summary.term_count == 0) {
-                summary.min_term = key->term;
-                summary.min_term_start_offset = val.term_start_offset;
-            }
-            summary.max_term = key->term;
-            summary.max_term_start_offset = val.term_start_offset;
-            ++summary.term_count;
+            on_term(
+              term_start{
+                .term_id = key->term,
+                .start_offset = val.term_start_offset,
+              });
             co_await iter.next();
         }
     } catch (...) {
@@ -161,13 +154,53 @@ debug_reader::get_partition_summary(const model::topic_id_partition& tp) {
         co_return std::unexpected(std::move(comp_res.error()));
     }
     if (comp_res.value()) {
-        summary.has_compaction_state = true;
-        auto& cs = *comp_res.value();
-        summary.cleaned_range_count = cs.cleaned_ranges.to_vec().size();
-        summary.tombstone_range_count
-          = cs.cleaned_ranges_with_tombstones.size();
+        on_compaction(*std::move(comp_res.value()));
     }
 
+    co_return metadata;
+}
+
+ss::future<std::expected<debug_reader::partition_summary, debug_reader::error>>
+debug_reader::get_partition_summary(const model::topic_id_partition& tp) {
+    partition_summary summary;
+    summary.tp = tp;
+
+    auto res = co_await for_each_partition_row(
+      tp,
+      [&](const extent& ext) {
+          if (summary.extent_count == 0) {
+              summary.extent_min_offset = ext.base_offset;
+              summary.extent_max_offset = ext.last_offset;
+          } else {
+              if (ext.base_offset < summary.extent_min_offset) {
+                  summary.extent_min_offset = ext.base_offset;
+              }
+              if (ext.last_offset > summary.extent_max_offset) {
+                  summary.extent_max_offset = ext.last_offset;
+              }
+          }
+          summary.total_extent_data_size += ext.len;
+          ++summary.extent_count;
+      },
+      [&](const term_start& ts) {
+          if (summary.term_count == 0) {
+              summary.min_term = ts.term_id;
+              summary.min_term_start_offset = ts.start_offset;
+          }
+          summary.max_term = ts.term_id;
+          summary.max_term_start_offset = ts.start_offset;
+          ++summary.term_count;
+      },
+      [&](const compaction_state& cs) {
+          summary.has_compaction_state = true;
+          summary.cleaned_range_count = cs.cleaned_ranges.to_vec().size();
+          summary.tombstone_range_count
+            = cs.cleaned_ranges_with_tombstones.size();
+      });
+    if (!res) {
+        co_return std::unexpected(std::move(res.error()));
+    }
+    summary.metadata = std::move(*res);
     co_return summary;
 }
 
@@ -176,75 +209,15 @@ debug_reader::dump_partition(const model::topic_id_partition& tp) {
     partition_dump dump;
     dump.tp = tp;
 
-    auto meta_res = co_await reader_.get_metadata(tp);
-    if (!meta_res) {
-        co_return std::unexpected(std::move(meta_res.error()));
+    auto res = co_await for_each_partition_row(
+      tp,
+      [&](const extent& ext) { dump.extents.push_back(ext); },
+      [&](const term_start& ts) { dump.term_starts.push_back(ts); },
+      [&](compaction_state cs) { dump.compaction = std::move(cs); });
+    if (!res) {
+        co_return std::unexpected(std::move(res.error()));
     }
-    if (!meta_res.value()) {
-        co_return std::unexpected(
-          error(state_reader::errc::corruption, "No metadata for {}", tp));
-    }
-    dump.metadata = *meta_res.value();
-
-    // Materialize all extents.
-    auto extents_res = co_await reader_.get_inclusive_extents(
-      tp, std::nullopt, std::nullopt);
-    if (!extents_res) {
-        co_return std::unexpected(std::move(extents_res.error()));
-    }
-    if (extents_res.value()) {
-        auto rows = co_await extents_res.value()->materialize_rows();
-        for (auto& row_res : rows) {
-            if (!row_res) {
-                co_return std::unexpected(std::move(row_res.error()));
-            }
-            auto& row = *row_res;
-            auto decoded_key = extent_row_key::decode(row.key);
-            if (!decoded_key) {
-                co_return std::unexpected(error(
-                  state_reader::errc::corruption,
-                  "Failed to decode extent key {}",
-                  row.key));
-            }
-            dump.extents.push_back(
-              extent{
-                .base_offset = decoded_key->base_offset,
-                .last_offset = row.val.last_offset,
-                .max_timestamp = row.val.max_timestamp,
-                .filepos = row.val.filepos,
-                .len = row.val.len,
-                .oid = row.val.oid,
-              });
-        }
-    }
-
-    // Iterate term key space for key+value access.
-    try {
-        auto iter = co_await reader_.snap_.create_iterator();
-        co_await iter.seek(term_row_key::encode(tp, model::term_id(0)));
-        while (iter.valid()) {
-            auto key = term_row_key::decode(iter.key());
-            if (!key.has_value() || key->tidp != tp) {
-                break;
-            }
-            auto val = serde::from_iobuf<term_row_value>(iter.value());
-            dump.term_starts.push_back(
-              term_start{
-                .term_id = key->term,
-                .start_offset = val.term_start_offset,
-              });
-            co_await iter.next();
-        }
-    } catch (...) {
-        co_return std::unexpected(to_error(std::current_exception()));
-    }
-
-    auto comp_res = co_await reader_.get_compaction_metadata(tp);
-    if (!comp_res) {
-        co_return std::unexpected(std::move(comp_res.error()));
-    }
-    dump.compaction = std::move(comp_res.value());
-
+    dump.metadata = std::move(*res);
     co_return dump;
 }
 

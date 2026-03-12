@@ -176,11 +176,24 @@ message LsmFile {
     string largest_key_info = 5;
 }
 
+// A topic partition identified by either topic name or topic UUID.
+// When topic_id is set it is used directly, bypassing the topic-name lookup.
+// When both are set, topic_id takes precedence.
+// When neither is set the entry is skipped.
+message DebugTopicPartition {
+    // The topic's name (looked up in the topic table to resolve the UUID).
+    string topic = 1;
+    // The topic's partition, must be non-negative.
+    int32 partition = 2;
+    // The topic UUID. When set, the topic name lookup is skipped.
+    string topic_id = 3;
+}
+
 // --- Feature 1: Partition Summary ---
 
 message GetPartitionSummaryRequest {
     uint32 metastore_partition = 1;
-    repeated common.v1.TopicPartition partitions = 2;
+    repeated DebugTopicPartition partitions = 2;
 }
 
 message GetPartitionSummaryResponse {
@@ -211,7 +224,7 @@ message PartitionSummary {
 
 message DumpPartitionStateRequest {
     uint32 metastore_partition = 1;
-    repeated common.v1.TopicPartition partitions = 2;
+    repeated DebugTopicPartition partitions = 2;
     bool include_objects = 3;
     bool check_object_existence = 4;
 }
@@ -286,7 +299,7 @@ enum ObjectExistence {
 
 message CheckPartitionInvariantsRequest {
     uint32 metastore_partition = 1;
-    repeated common.v1.TopicPartition partitions = 2;
+    repeated DebugTopicPartition partitions = 2;
     bool check_object_existence = 3;
 }
 

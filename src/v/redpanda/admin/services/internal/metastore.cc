@@ -180,10 +180,19 @@ namespace {
     }
 }
 
-chunked_vector<model::topic_id_partition> resolve_topic_partitions(
+chunked_vector<model::topic_id_partition> resolve_debug_topic_partitions(
   const cluster::topic_table& tt, const auto& proto_partitions) {
     chunked_vector<model::topic_id_partition> result;
     for (const auto& p : proto_partitions) {
+        auto pid = model::partition_id{p.get_partition()};
+        if (!p.get_topic_id().empty()) {
+            auto uuid = model::topic_id{uuid_t::from_string(p.get_topic_id())};
+            result.emplace_back(uuid, pid);
+            continue;
+        }
+        if (p.get_topic().empty()) {
+            continue;
+        }
         const auto& topic_metadata = tt.get_topic_metadata_ref(
           model::topic_namespace{
             model::kafka_namespace, model::topic{p.get_topic()}});
@@ -196,7 +205,7 @@ chunked_vector<model::topic_id_partition> resolve_topic_partitions(
             throw serde::pb::rpc::not_found_exception(
               fmt::format("topic missing id: {}", p.get_topic()));
         }
-        result.emplace_back(*topic_id, model::partition_id{p.get_partition()});
+        result.emplace_back(*topic_id, pid);
     }
     return result;
 }
@@ -227,7 +236,7 @@ metastore_service_impl::get_partition_summary(
         throw serde::pb::rpc::unavailable_exception("no shard");
     }
 
-    auto partitions = resolve_topic_partitions(
+    auto partitions = resolve_debug_topic_partitions(
       _topic_table->local(), req.get_partitions());
 
     using result_t = std::expected<
@@ -301,7 +310,7 @@ metastore_service_impl::dump_partition_state(
         throw serde::pb::rpc::unavailable_exception("no shard");
     }
 
-    auto partitions = resolve_topic_partitions(
+    auto partitions = resolve_debug_topic_partitions(
       _topic_table->local(), req.get_partitions());
     bool include_objects = req.get_include_objects();
     bool check_existence = req.get_check_object_existence();
@@ -438,7 +447,7 @@ metastore_service_impl::check_partition_invariants(
         throw serde::pb::rpc::unavailable_exception("no shard");
     }
 
-    auto partitions = resolve_topic_partitions(
+    auto partitions = resolve_debug_topic_partitions(
       _topic_table->local(), req.get_partitions());
     bool check_existence = req.get_check_object_existence();
 

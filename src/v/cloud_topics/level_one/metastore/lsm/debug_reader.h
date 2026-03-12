@@ -82,6 +82,10 @@ public:
       const chunked_hash_map<object_id, object_entry>& known_objects);
 
 private:
+    template<typename ExtentFn, typename TermFn, typename CompactionFn>
+    ss::future<std::expected<metadata_row_value, error>> for_each_partition_row(
+      const model::topic_id_partition&, ExtentFn&&, TermFn&&, CompactionFn&&);
+
     state_reader reader_;
 };
 
