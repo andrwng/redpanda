@@ -744,6 +744,117 @@ TEST_F(FileCommitterTest, TestDontLoadMainTable) {
     ASSERT_EQ(0, main_reqs.size());
 }
 
+// Verify that files with delete_key_field_ids trigger the merge delta path.
+// The merge delta path downloads data files to extract keys, which will fail
+// against the mock S3 (no real Parquet data). The expected error confirms
+// the merge delta code path was entered.
+TEST_F(FileCommitterTest, TestMergeDeltaPathTriggered) {
+    create_table();
+
+    topics_state state;
+    auto t_state = make_topic_state({{{0, 99}}}, model::offset{1000});
+
+    for (auto& e :
+         t_state.pid_to_pending_files[model::partition_id{0}].pending_entries) {
+        datalake::coordinator::data_file file{
+          .row_count = 100,
+          .file_size_bytes = 1024,
+          .table_schema_id = 0,
+          .partition_spec_id = 0,
+        };
+        chunked_vector<std::optional<bytes>> pk;
+        pk.push_back(iceberg::value_to_bytes(iceberg::int_value{42}));
+        file.partition_key = std::move(pk);
+
+        chunked_vector<int32_t> key_ids;
+        key_ids.push_back(1);
+        file.delete_key_field_ids = std::move(key_ids);
+
+        e.data.files.emplace_back(std::move(file));
+    }
+    state.topic_to_state[topic] = std::move(t_state);
+
+    auto res = committer.commit_topic_files_to_catalog(topic, state).get();
+    // The merge delta path tries to download the data file to extract keys,
+    // which fails because the mock S3 has no actual Parquet data.
+    ASSERT_TRUE(res.has_error());
+    ASSERT_EQ(res.error(), file_committer::errc::failed);
+}
+
+// Verify that a mix of data-only and upsert files triggers merge delta, while
+// data-only files alone still use the append path.
+TEST_F(FileCommitterTest, TestMixedFilesClassification) {
+    create_table();
+
+    // First, commit data-only files to verify append path works.
+    {
+        topics_state state;
+        auto t_state = make_topic_state({{{0, 99}}}, model::offset{1000});
+        for (auto& e : t_state.pid_to_pending_files[model::partition_id{0}]
+                         .pending_entries) {
+            datalake::coordinator::data_file file{
+              .row_count = 100,
+              .file_size_bytes = 1024,
+              .table_schema_id = 0,
+              .partition_spec_id = 0,
+            };
+            chunked_vector<std::optional<bytes>> pk;
+            pk.push_back(iceberg::value_to_bytes(iceberg::int_value{42}));
+            file.partition_key = std::move(pk);
+            e.data.files.emplace_back(std::move(file));
+        }
+        state.topic_to_state[topic] = std::move(t_state);
+        auto res = committer.commit_topic_files_to_catalog(topic, state).get();
+        ASSERT_FALSE(res.has_error());
+    }
+
+    // Now commit a mix of data-only and upsert files. The presence of any
+    // upsert file triggers the merge delta path, which will fail at download.
+    {
+        topics_state state;
+        auto t_state = make_topic_state(
+          {{{100, 199}, {200, 299}}}, model::offset{1001});
+        auto& entries = t_state.pid_to_pending_files[model::partition_id{0}]
+                          .pending_entries;
+        for (auto& e : entries) {
+            // Data-only file.
+            {
+                datalake::coordinator::data_file file{
+                  .row_count = 100,
+                  .file_size_bytes = 1024,
+                  .table_schema_id = 0,
+                  .partition_spec_id = 0,
+                };
+                chunked_vector<std::optional<bytes>> pk;
+                pk.push_back(iceberg::value_to_bytes(iceberg::int_value{42}));
+                file.partition_key = std::move(pk);
+                e.data.files.emplace_back(std::move(file));
+            }
+            // Upsert file with key field IDs.
+            {
+                datalake::coordinator::data_file upsert_file{
+                  .row_count = 50,
+                  .file_size_bytes = 512,
+                  .table_schema_id = 0,
+                  .partition_spec_id = 0,
+                };
+                chunked_vector<std::optional<bytes>> pk;
+                pk.push_back(iceberg::value_to_bytes(iceberg::int_value{42}));
+                upsert_file.partition_key = std::move(pk);
+                chunked_vector<int32_t> key_ids;
+                key_ids.push_back(1);
+                upsert_file.delete_key_field_ids = std::move(key_ids);
+                e.data.files.emplace_back(std::move(upsert_file));
+            }
+        }
+        state.topic_to_state[topic] = std::move(t_state);
+        auto res = committer.commit_topic_files_to_catalog(topic, state).get();
+        // Fails because merge delta path tries to download non-existent data.
+        ASSERT_TRUE(res.has_error());
+        ASSERT_EQ(res.error(), file_committer::errc::failed);
+    }
+}
+
 TEST_F(FileCommitterTest, TestColumnStatsPropagateToManifest) {
     create_table();
 

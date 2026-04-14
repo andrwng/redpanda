@@ -46,8 +46,7 @@ public:
 
 private:
     type_resolver& _key_resolver;
-    std::optional<chunked_vector<iceberg::nested_field::id_t>>
-      _cached_key_field_ids;
+    std::optional<chunked_vector<ss::sstring>> _cached_key_field_names;
 };
 
 } // namespace datalake

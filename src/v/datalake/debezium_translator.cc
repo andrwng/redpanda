@@ -156,12 +156,12 @@ const iobuf* extract_string_buf(const std::optional<iceberg::value>& val) {
 std::optional<iceberg::struct_value> extract_key_fields(
   const iceberg::struct_value& src,
   const iceberg::struct_type& src_type,
-  const chunked_vector<iceberg::nested_field::id_t>& key_field_ids) {
+  const chunked_vector<ss::sstring>& key_field_names) {
     auto key = iceberg::struct_value{};
-    for (const auto& key_id : key_field_ids) {
+    for (const auto& name : key_field_names) {
         bool found = false;
         for (size_t i = 0; i < src_type.fields.size(); ++i) {
-            if (src_type.fields[i]->id == key_id) {
+            if (src_type.fields[i]->name == name) {
                 if (src.fields[i].has_value()) {
                     key.fields.emplace_back(
                       iceberg::make_copy(src.fields[i].value()));
@@ -246,7 +246,7 @@ record_type debezium_translator::build_type(
             .is_debezium = true,
           },
           .type = schemaless_struct_type(),
-          .key_field_ids = std::nullopt,
+          .key_field_names = std::nullopt,
         };
     }
 
@@ -262,11 +262,12 @@ record_type debezium_translator::build_type(
         .is_debezium = true,
       },
       .type = std::move(ret_type),
-      .key_field_ids = [this]() -> std::optional<chunked_vector<iceberg::nested_field::id_t>> {
-        if (!_cached_key_field_ids) {
-            return std::nullopt;
-        }
-        return _cached_key_field_ids->copy();
+      .key_field_names
+      = [this]() -> std::optional<chunked_vector<ss::sstring>> {
+          if (!_cached_key_field_names) {
+              return std::nullopt;
+          }
+          return _cached_key_field_names->copy();
       }(),
     };
 }
@@ -347,7 +348,7 @@ debezium_translator::translate_data(
     const auto& after_type = *after_type_ptr;
 
     // Resolve key field IDs on first call.
-    if (!_cached_key_field_ids) {
+    if (!_cached_key_field_names) {
         auto key_type_res = co_await _key_resolver.resolve_buf_type(
           key->copy());
         if (key_type_res.has_error()) {
@@ -361,19 +362,13 @@ debezium_translator::translate_data(
         if (key_resolved.type.has_value()) {
             auto& key_iceberg_type = std::get<iceberg::struct_type>(
               key_resolved.type.value()->type);
-            chunked_vector<iceberg::nested_field::id_t> ids;
+            chunked_vector<ss::sstring> names;
             for (const auto& key_field : key_iceberg_type.fields) {
-                // Match key field names against the after struct fields.
-                for (const auto& after_field : after_type.fields) {
-                    if (after_field->name == key_field->name) {
-                        ids.emplace_back(after_field->id);
-                        break;
-                    }
-                }
+                names.emplace_back(key_field->name);
             }
-            _cached_key_field_ids = std::move(ids);
+            _cached_key_field_names = std::move(names);
         } else {
-            _cached_key_field_ids.emplace();
+            _cached_key_field_names.emplace();
         }
     }
 
@@ -428,10 +423,12 @@ debezium_translator::translate_data(
     // Helper: extract key fields from a struct_value.
     auto extract_key =
       [&](iceberg::struct_value* src) -> std::optional<iceberg::struct_value> {
-        if (!src || !_cached_key_field_ids || _cached_key_field_ids->empty()) {
+        if (
+          !src || !_cached_key_field_names
+          || _cached_key_field_names->empty()) {
             return std::nullopt;
         }
-        return extract_key_fields(*src, after_type, *_cached_key_field_ids);
+        return extract_key_fields(*src, after_type, *_cached_key_field_names);
     };
 
     const auto& op = *op_buf;
