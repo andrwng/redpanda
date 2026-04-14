@@ -555,6 +555,32 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "equality_delete_file",
+    srcs = [
+        "equality_delete_file.cc",
+    ],
+    hdrs = [
+        "equality_delete_file.h",
+    ],
+    implementation_deps = [
+        "//src/v/bytes:iostream",
+        "//src/v/iceberg/conversion:stats_parquet",
+        "//src/v/serde/parquet:writer",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":datatypes",
+        ":manifest_entry",
+        ":position_delete_file",
+        "//src/v/bytes:iobuf",
+        "//src/v/container:chunked_vector",
+        "//src/v/serde/parquet:schema",
+        "//src/v/serde/parquet:value",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
     name = "position_delete_file",
     srcs = [
         "position_delete_file.cc",
