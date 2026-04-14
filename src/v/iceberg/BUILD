@@ -555,6 +555,32 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "position_delete_file",
+    srcs = [
+        "position_delete_file.cc",
+    ],
+    hdrs = [
+        "position_delete_file.h",
+    ],
+    implementation_deps = [
+        "//src/v/bytes:iostream",
+        "//src/v/iceberg/conversion:stats_parquet",
+        "//src/v/serde/parquet:schema",
+        "//src/v/serde/parquet:value",
+        "//src/v/serde/parquet:writer",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":manifest_entry",
+        ":partition_key",
+        ":uri",
+        "//src/v/bytes:iobuf",
+        "//src/v/container:chunked_vector",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
     name = "partition_key_type",
     srcs = [
         "partition_key_type.cc",
