@@ -227,6 +227,13 @@ ss::future<ss::stop_iteration> record_multiplexer::do_multiplex(
                 continue;
             }
         }
+        auto& translated = record_data_res.value();
+
+        // Skip records with no data row (pure deletes).
+        // Delete key handling added in a later task.
+        if (!translated.data_row) {
+            continue;
+        }
         auto& val_type = val_type_res.value().type;
         record_schema_components comps{
           .key_identifier = std::nullopt,
@@ -339,7 +346,7 @@ ss::future<ss::stop_iteration> record_multiplexer::do_multiplex(
 
         auto& writer = writer_iter->second;
         auto add_data_result = co_await writer->add_data(
-          std::move(record_data_res.value()), estimated_size, as);
+          std::move(*translated.data_row), estimated_size, as);
 
         if (add_data_result != writer_error::ok) {
             vlogl(
@@ -617,7 +624,7 @@ record_multiplexer::handle_invalid_record(
         _result.value().last_offset = offset;
 
         auto add_data_err = co_await _invalid_record_writer->add_data(
-          std::move(record_data_res.value()), estimated_size, as);
+          std::move(*record_data_res.value().data_row), estimated_size, as);
 
         if (add_data_err != writer_error::ok) {
             vlog(
