@@ -1071,6 +1071,7 @@ redpanda_cc_library(
         ":action",
         ":manifest_io",
         ":merge_append_action",
+        ":row_delta_action",
         ":schema",
         ":table_metadata",
         ":table_requirement",
