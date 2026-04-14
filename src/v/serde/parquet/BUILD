@@ -108,6 +108,7 @@ redpanda_cc_library(
     hdrs = [
         "assembler.h",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":column_array",
         ":schema",
@@ -127,6 +128,7 @@ redpanda_cc_library(
     hdrs = [
         "column_chunk_reader.h",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":column_array",
         ":encoding",
@@ -150,6 +152,7 @@ redpanda_cc_library(
     hdrs = [
         "column_array.h",
     ],
+    visibility = ["//visibility:public"],
     deps = [
         ":schema",
         "//src/v/base",
@@ -219,6 +222,83 @@ redpanda_cc_library(
         "//src/v/container:chunked_vector",
         "//src/v/hashing:crc32",
         "@abseil-cpp//absl/numeric:int128",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "variant_value",
+    srcs = ["variant_value.cc"],
+    hdrs = ["variant_value.h"],
+    deps = [
+        ":value",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/container:chunked_vector",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "variant_json",
+    srcs = ["variant_json.cc"],
+    hdrs = ["variant_json.h"],
+    implementation_deps = [
+        "@fmt",
+    ],
+    deps = [
+        ":variant_value",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/serde/json:parser",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "variant_shredder",
+    srcs = ["variant_shredder.cc"],
+    hdrs = ["variant_shredder.h"],
+    deps = [
+        ":schema",
+        ":value",
+        ":variant_value",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/container:chunked_vector",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "variant_encoding",
+    srcs = ["variant_encoding.cc"],
+    hdrs = ["variant_encoding.h"],
+    deps = [
+        ":value",
+        ":variant_value",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/bytes:iobuf_parser",
+        "//src/v/container:chunked_vector",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "variant_schema",
+    srcs = ["variant_schema.cc"],
+    hdrs = ["variant_schema.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":schema",
+        ":value",
+        ":variant_encoding",
+        ":variant_shredder",
+        ":variant_value",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/container:chunked_vector",
         "@seastar",
     ],
 )
