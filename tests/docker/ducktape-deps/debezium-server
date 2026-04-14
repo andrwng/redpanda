@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -e
+
+source "$(dirname "${BASH_SOURCE[0]}")/download-utils"
+
+mkdir -p /opt/debezium-server
+
+DEBEZIUM_VERSION=3.1.1.Final
+DEBEZIUM_URL=https://repo1.maven.org/maven2/io/debezium/debezium-server-dist/${DEBEZIUM_VERSION}/debezium-server-dist-${DEBEZIUM_VERSION}.tar.gz
+
+DL_STRIP=1 download_extract ${DEBEZIUM_URL} /opt/debezium-server
+
+mkdir -p /opt/debezium-server/data
+mkdir -p /opt/debezium-server/conf
