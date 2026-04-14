@@ -749,6 +749,21 @@ redpanda_cc_gtest(
     ],
 )
 
+redpanda_cc_gtest(
+    name = "position_delete_file_test",
+    timeout = "short",
+    srcs = [
+        "position_delete_file_test.cc",
+    ],
+    deps = [
+        "//src/v/iceberg:position_delete_file",
+        "//src/v/serde/parquet:reader",
+        "//src/v/serde/parquet:value",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+    ],
+)
+
 redpanda_cc_bench(
     name = "iceberg_compatibility_rpbench",
     srcs = [
