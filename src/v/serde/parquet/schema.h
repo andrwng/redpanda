@@ -108,6 +108,10 @@ struct date_type {
 struct f16_type {
     bool operator==(const f16_type&) const = default;
 };
+// Parquet VARIANT logical type (V3 placeholder, field ID may change)
+struct variant_type {
+    bool operator==(const variant_type&) const = default;
+};
 
 /**
  * Logical type to annotate a column that is always null.
@@ -226,12 +230,13 @@ using logical_type = std::variant<
   // use ConvertedType TIMESTAMP_MILLIS for
   // TIMESTAMP(isAdjustedToUTC=*, unit=MILLIS)
   timestamp_type,
-  int_type,  // use ConvertedType INT_* or UINT_*
-  null_type, // no compatible ConvertedType
-  json_type, // use ConvertedType JSON
-  bson_type, // use ConvertedType BSON
-  uuid_type, // no compatible ConvertedType
-  f16_type>; // no compatible ConvertedType
+  int_type,      // use ConvertedType INT_* or UINT_*
+  null_type,     // no compatible ConvertedType
+  json_type,     // use ConvertedType JSON
+  bson_type,     // use ConvertedType BSON
+  uuid_type,     // no compatible ConvertedType
+  f16_type,      // no compatible ConvertedType
+  variant_type>; // no compatible ConvertedType
 
 /**
  * Represents a element inside a schema definition.
