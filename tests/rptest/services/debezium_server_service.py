@@ -25,6 +25,7 @@ class DebeziumServerService(Service):
     PERSISTENT_ROOT = "/var/lib/debezium"
     LOG_FILE = f"{PERSISTENT_ROOT}/debezium.log"
     HEALTH_PORT = 8080
+    logs = {"debezium_logs": {"path": LOG_FILE, "collect_default": True}}
 
     def __init__(
         self,
@@ -51,7 +52,7 @@ class DebeziumServerService(Service):
         schema_reg = self.redpanda.schema_reg()
 
         props = self._build_properties(pg_host, bootstrap, schema_reg)
-        config_path = f"{self.INSTALL_DIR}/conf/application.properties"
+        config_path = f"{self.INSTALL_DIR}/config/application.properties"
         node.account.create_file(config_path, props)
 
         # Detect architecture for Java path
@@ -62,12 +63,29 @@ class DebeziumServerService(Service):
         )
         java_home = f"/usr/lib/jvm/java-21-openjdk-{arch}"
 
-        cmd = (
-            f"JAVA_HOME={java_home} "
-            f"nohup {self.INSTALL_DIR}/run.sh "
-            f"1>> {self.LOG_FILE} 2>> {self.LOG_FILE} &"
+        runner_jar = (
+            node.account.ssh_output(
+                f"ls {self.INSTALL_DIR}/debezium-server-*runner.jar"
+            )
+            .decode()
+            .strip()
         )
+        # Use -cp with lib/* glob (not -jar) so that additional JARs
+        # we added to lib/ (e.g. Confluent Avro serializer) are on
+        # the classpath. Use semicolon before &, not &&: the pattern
+        # `cd dir && cmd &` backgrounds the entire compound command as
+        # a subshell that holds the SSH channel open, while
+        # `cd dir; cmd &` only backgrounds cmd.
+        cp = f"{runner_jar}:{self.INSTALL_DIR}/config:{self.INSTALL_DIR}/lib/*"
+        cmd = (
+            f"cd {self.INSTALL_DIR}; "
+            f"nohup {java_home}/bin/java -cp '{cp}'"
+            f" io.debezium.server.Main"
+            f" >> {self.LOG_FILE} 2>&1 &"
+        )
+        self.logger.info(f"Starting Debezium with: {cmd}")
         node.account.ssh(cmd)
+        self.logger.info("Debezium SSH command returned")
 
         wait_until(
             lambda: self._is_ready(node),
@@ -77,7 +95,7 @@ class DebeziumServerService(Service):
         )
 
     def stop_node(self, node):
-        node.account.ssh("pkill -f 'debezium-server.*runner.jar'", allow_fail=True)
+        node.account.ssh("pkill -f 'debezium.server.Main'", allow_fail=True)
 
     def clean_node(self, node):
         self.stop_node(node)
@@ -92,6 +110,7 @@ class DebeziumServerService(Service):
             return False
 
     def _build_properties(self, pg_host, bootstrap_servers, schema_reg_url):
+        first_sr = schema_reg_url.split(",")[0]
         return f"""# Source: PostgreSQL
 debezium.source.connector.class=io.debezium.connector.postgresql.PostgresConnector
 debezium.source.offset.storage.file.filename={self.PERSISTENT_ROOT}/offsets.dat
@@ -112,13 +131,14 @@ debezium.source.snapshot.mode=initial
 debezium.sink.type=kafka
 debezium.sink.kafka.producer.bootstrap.servers={bootstrap_servers}
 debezium.sink.kafka.producer.acks=all
+debezium.sink.kafka.producer.key.serializer=org.apache.kafka.common.serialization.ByteArraySerializer
+debezium.sink.kafka.producer.value.serializer=org.apache.kafka.common.serialization.ByteArraySerializer
 
-# Serialization: Avro + Schema Registry
+# Avro format via Confluent AvroConverter (produces SR wire format)
 debezium.format.value=avro
-debezium.format.value.schemas.enable=true
+debezium.format.value.schema.registry.url={first_sr}
 debezium.format.key=avro
-debezium.format.key.schemas.enable=true
-quarkus.apicurio-registry.devservices.enabled=false
+debezium.format.key.schema.registry.url={first_sr}
 """
 
     def topic_name(self, schema="public", table=""):
