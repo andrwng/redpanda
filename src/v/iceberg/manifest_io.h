@@ -57,6 +57,9 @@ public:
 
     ss::future<checked<iobuf, metadata_io::errc>>
     download_object_bytes(const uri& uri);
+
+    ss::future<checked<size_t, metadata_io::errc>>
+    upload_object_bytes(const uri& uri, iobuf data);
 };
 
 } // namespace iceberg
