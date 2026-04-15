@@ -151,6 +151,7 @@ redpanda_cc_library(
     deps = [
         ":backlog_controller",
         ":catalog_schema_manager",
+        ":cdc_key_value_translator",
         ":cloud_data_io",
         ":debezium_translator",
         ":location",
@@ -330,6 +331,7 @@ redpanda_cc_library(
         ":table_id_provider",
         "//src/v/base",
         "//src/v/features",
+        "//src/v/iceberg:compatibility_utils",
         "//src/v/iceberg/conversion:conversion_outcome",
         "//src/v/model:batch_compression",
         "//src/v/utils:lazy_abort_source",
@@ -415,6 +417,29 @@ redpanda_cc_library(
         ":schema_identifier",
         "//src/v/base",
         "//src/v/iceberg:datatypes",
+        "//src/v/model",
+    ],
+)
+
+redpanda_cc_library(
+    name = "cdc_key_value_translator",
+    srcs = [
+        "cdc_key_value_translator.cc",
+    ],
+    hdrs = [
+        "cdc_key_value_translator.h",
+    ],
+    implementation_deps = [
+        ":logger",
+        ":table_definition",
+    ],
+    visibility = [":__subpackages__"],
+    deps = [
+        ":record_translator",
+        "//src/v/base",
+        "//src/v/iceberg:datatypes",
+        "//src/v/iceberg:values",
+        "//src/v/metrics",
         "//src/v/model",
     ],
 )
