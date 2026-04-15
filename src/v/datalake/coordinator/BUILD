@@ -210,8 +210,10 @@ redpanda_cc_library(
         "//src/v/iceberg:transaction",
         "//src/v/iceberg:values",
         "//src/v/iceberg:values_bytes",
+        "//src/v/serde/parquet:reader",
         "//src/v/ssx:future_util",
         "//src/v/storage",
+        "//src/v/utils:uuid",
     ],
     deps = [
         ":file_committer",
