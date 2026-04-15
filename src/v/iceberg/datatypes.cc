@@ -330,6 +330,7 @@ const nested_field* struct_type::find_field_by_name(
             return nullptr;
         }
 
+        field = nullptr;
         for (const auto& f : cur_struct_type->fields) {
             if (f->name == n) {
                 field = f.get();

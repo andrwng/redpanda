@@ -26,10 +26,8 @@
 #include "iceberg/transaction.h"
 #include "iceberg/values.h"
 #include "iceberg/values_bytes.h"
-#include "serde/parquet/reader.h"
 #include "ssx/future-util.h"
 #include "storage/api.h"
-#include "utils/uuid.h"
 
 #include <exception>
 #include <optional>
@@ -518,82 +516,12 @@ private:
             }
         }
 
-        if (
-          !deletes.empty()
-          && strategy == iceberg::delete_commit_strategy::position_deletes) {
-            // Convert equality deletes to position deletes by reading
-            // the key values from the equality delete files, scanning
-            // existing data files for matching rows, and producing
-            // position delete files.
-            iceberg::read_file_fn read_file =
-              [&io](const iceberg::uri& path) -> ss::future<iobuf> {
-                auto res = co_await io.download_object_bytes(path);
-                if (res.has_error()) {
-                    throw std::runtime_error(
-                      fmt::format(
-                        "Failed to download file {}: {}",
-                        path,
-                        static_cast<int>(res.error())));
-                }
-                co_return std::move(res.value());
-            };
-
-            // Read key values from the equality delete files.
-            chunked_vector<serde::parquet::group_value> keys;
-            for (const auto& d : deletes) {
-                auto file_data = co_await read_file(d.file.file_path);
-                auto records = co_await serde::parquet::read_file_as_records(
-                  std::move(file_data));
-                for (auto& r : records) {
-                    keys.push_back(std::move(r));
-                }
-            }
-
-            // Build exclude set: don't scan files we're about to
-            // commit.
-            chunked_hash_set<ss::sstring> exclude;
-            for (const auto& f : all_data) {
-                exclude.insert(f.file.file_path());
-            }
-            for (const auto& d : deletes) {
-                exclude.insert(d.file.file_path());
-            }
-
-            auto positions = co_await iceberg::find_matching_positions(
-              txn.table(), io, keys, *key_field_ids_, exclude, read_file);
-
-            auto pending = co_await iceberg::make_position_deletes(
-              txn.table(), std::move(positions));
-
-            // Upload position delete files and assign URIs.
-            auto table_path_res = io.from_uri(txn.table().location);
-            if (table_path_res.has_error()) {
-                vlog(
-                  datalake_log.warn,
-                  "Failed to parse table location URI: {}",
-                  txn.table().location);
-                co_return file_committer::errc::failed;
-            }
-
-            deletes.clear();
-            for (auto& pd : pending) {
-                auto path = table_path_res.value() / "data"
-                            / fmt::format(
-                              "{}-posdelete.parquet", uuid_t::create());
-                auto file_uri = io.to_uri(path);
-                pd.file.file.file_path = file_uri;
-                auto upload_res = co_await io.upload_object_bytes(
-                  file_uri, std::move(pd.data));
-                if (upload_res.has_error()) {
-                    vlog(
-                      datalake_log.warn,
-                      "Failed to upload position delete file: {}",
-                      file_uri);
-                    co_return file_committer::errc::failed;
-                }
-                deletes.push_back(std::move(pd.file));
-            }
-        }
+        // TODO: when non-debezium translators support upserts without
+        // producing their own delete files (e.g. if upserting by
+        // record key), the coordinator will need to generate deletes
+        // here. That path would call extract_keys() on the upsert
+        // data files, then make_equality_deletes() or
+        // make_position_deletes(), and upload the generated files.
 
         co_return merge_delta_result{
           .data_files = std::move(all_data),
