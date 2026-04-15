@@ -21,7 +21,7 @@ class PostgresService(Service):
     """
 
     PERSISTENT_ROOT = "/var/lib/postgresql-test"
-    LOG_FILE = "/var/log/postgresql-test.log"
+    LOG_FILE = "/var/lib/postgresql-test/postgresql.log"
     PG_PORT = 5432
     DB_NAME = "testdb"
     DB_USER = "dbz"
@@ -41,17 +41,27 @@ class PostgresService(Service):
         )
         return result if result else "/usr/lib/postgresql/16/bin"
 
+    def _pg_cmd(self, pg_bin, cmd):
+        """Wrap a postgres command to run as the postgres user from /."""
+        return f"cd / && sudo -u postgres {pg_bin}/{cmd}"
+
     def start_node(self, node, timeout_sec=60):
         pg_bin = self._pg_bin(node)
 
-        # Initialize a fresh data directory
+        # Ensure the postgres system user exists (the Docker image copies
+        # binaries from a build stage but not /etc/passwd entries).
+        node.account.ssh(
+            "id -u postgres >/dev/null 2>&1 || useradd -r -m -s /bin/bash postgres",
+            allow_fail=True,
+        )
+
+        # Create directories needed by PostgreSQL
         node.account.ssh(f"mkdir -p {self.PERSISTENT_ROOT}")
         node.account.ssh(
-            f"chown -R postgres:postgres {self.PERSISTENT_ROOT}", allow_fail=True
+            "mkdir -p /var/run/postgresql && chown postgres:postgres /var/run/postgresql"
         )
-        node.account.ssh(
-            f"sudo -u postgres {pg_bin}/initdb -D {self.PERSISTENT_ROOT}/data"
-        )
+        node.account.ssh(f"chown -R postgres:postgres {self.PERSISTENT_ROOT}")
+        node.account.ssh(self._pg_cmd(pg_bin, f"initdb -D {self.PERSISTENT_ROOT}/data"))
 
         # Configure for logical replication
         conf = f"{self.PERSISTENT_ROOT}/data/postgresql.conf"
@@ -67,9 +77,10 @@ class PostgresService(Service):
 
         # Start PostgreSQL
         node.account.ssh(
-            f"sudo -u postgres {pg_bin}/pg_ctl "
-            f"-D {self.PERSISTENT_ROOT}/data "
-            f"-l {self.LOG_FILE} start"
+            self._pg_cmd(
+                pg_bin,
+                f"pg_ctl -D {self.PERSISTENT_ROOT}/data -l {self.LOG_FILE} start",
+            )
         )
 
         # Wait for ready
@@ -83,7 +94,7 @@ class PostgresService(Service):
         # Create test user and database
         self._exec_sql_as_postgres(
             node,
-            f"CREATE ROLE {self.DB_USER} WITH LOGIN PASSWORD "
+            f"CREATE ROLE {self.DB_USER} WITH LOGIN SUPERUSER PASSWORD "
             f"'{self.DB_PASSWORD}' REPLICATION",
         )
         self._exec_sql_as_postgres(
@@ -93,21 +104,22 @@ class PostgresService(Service):
     def stop_node(self, node):
         pg_bin = self._pg_bin(node)
         node.account.ssh(
-            f"sudo -u postgres {pg_bin}/pg_ctl "
-            f"-D {self.PERSISTENT_ROOT}/data stop -m fast",
+            self._pg_cmd(
+                pg_bin,
+                f"pg_ctl -D {self.PERSISTENT_ROOT}/data stop -m fast",
+            ),
             allow_fail=True,
         )
 
     def clean_node(self, node):
         self.stop_node(node)
         node.account.ssh(f"rm -rf {self.PERSISTENT_ROOT}", allow_fail=True)
-        node.account.ssh(f"rm -f {self.LOG_FILE}", allow_fail=True)
 
     def _is_ready(self, node):
         try:
             pg_bin = self._pg_bin(node)
             result = node.account.ssh_output(
-                f"sudo -u postgres {pg_bin}/pg_isready -p {self.PG_PORT}",
+                self._pg_cmd(pg_bin, f"pg_isready -p {self.PG_PORT}"),
                 allow_fail=True,
             ).decode()
             return "accepting connections" in result
@@ -115,14 +127,18 @@ class PostgresService(Service):
             return False
 
     def _exec_sql_as_postgres(self, node, sql):
-        node.account.ssh(f'sudo -u postgres psql -p {self.PG_PORT} -c "{sql}"')
+        pg_bin = self._pg_bin(node)
+        node.account.ssh(
+            f'cd / && sudo -u postgres {pg_bin}/psql -p {self.PG_PORT} -c "{sql}"'
+        )
 
     def exec_sql(self, node=None, sql="", database=None):
         """Execute SQL as the test user."""
         node = node or self.nodes[0]
         db = database or self.DB_NAME
+        pg_bin = self._pg_bin(node)
         node.account.ssh(
-            f"PGPASSWORD={self.DB_PASSWORD} psql "
+            f"PGPASSWORD={self.DB_PASSWORD} {pg_bin}/psql "
             f"-h localhost -p {self.PG_PORT} "
             f"-U {self.DB_USER} -d {db} "
             f'-c "{sql}"'
@@ -132,9 +148,10 @@ class PostgresService(Service):
         """Execute SQL and return the output."""
         node = node or self.nodes[0]
         db = database or self.DB_NAME
+        pg_bin = self._pg_bin(node)
         return (
             node.account.ssh_output(
-                f"PGPASSWORD={self.DB_PASSWORD} psql "
+                f"PGPASSWORD={self.DB_PASSWORD} {pg_bin}/psql "
                 f"-h localhost -p {self.PG_PORT} "
                 f"-U {self.DB_USER} -d {db} -t -A "
                 f'-c "{sql}"'
