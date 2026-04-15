@@ -1397,6 +1397,43 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "row_operations",
+    srcs = [
+        "row_operations.cc",
+    ],
+    hdrs = [
+        "row_operations.h",
+    ],
+    implementation_deps = [
+        ":equality_delete_file",
+        ":logger",
+        ":manifest",
+        ":manifest_list",
+        ":snapshot",
+        "//src/v/bytes:hash",
+        "//src/v/serde/parquet:encoding",
+        "//src/v/serde/parquet:reader",
+        "//src/v/serde/parquet:schema",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":datatypes",
+        ":manifest_entry",
+        ":manifest_io",
+        ":merge_append_action",
+        ":position_delete_file",
+        ":row_delta_action",
+        ":table_metadata",
+        ":uri",
+        "//src/v/bytes:iobuf",
+        "//src/v/container:chunked_hash_map",
+        "//src/v/container:chunked_vector",
+        "//src/v/serde/parquet:value",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
     name = "parquet_reader",
     srcs = ["parquet_reader.cc"],
     hdrs = ["parquet_reader.h"],
