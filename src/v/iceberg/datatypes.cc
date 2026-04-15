@@ -195,6 +195,11 @@ std::ostream& operator<<(std::ostream& o, const binary_type&) {
     return o;
 }
 
+std::ostream& operator<<(std::ostream& o, const variant_type&) {
+    o << "variant";
+    return o;
+}
+
 std::ostream& operator<<(std::ostream& o, const struct_type& st) {
     /**
      * Struct is printed as struct[field_1_name<field_1_type>,...]

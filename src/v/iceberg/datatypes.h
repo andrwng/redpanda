@@ -39,6 +39,9 @@ struct fixed_type {
     uint64_t length;
 };
 struct binary_type {};
+struct variant_type {
+    friend bool operator==(const variant_type&, const variant_type&) = default;
+};
 using primitive_type = std::variant<
   boolean_type,
   int_type,
@@ -53,7 +56,8 @@ using primitive_type = std::variant<
   string_type,
   uuid_type,
   fixed_type,
-  binary_type>;
+  binary_type,
+  variant_type>;
 bool operator==(const primitive_type& lhs, const primitive_type& rhs);
 
 struct struct_type;
@@ -79,6 +83,7 @@ std::ostream& operator<<(std::ostream&, const string_type&);
 std::ostream& operator<<(std::ostream&, const uuid_type&);
 std::ostream& operator<<(std::ostream&, const fixed_type&);
 std::ostream& operator<<(std::ostream&, const binary_type&);
+std::ostream& operator<<(std::ostream&, const variant_type&);
 std::ostream& operator<<(std::ostream&, const struct_type&);
 std::ostream& operator<<(std::ostream&, const list_type&);
 std::ostream& operator<<(std::ostream&, const map_type&);
