@@ -69,52 +69,6 @@ std::optional<size_t> get_redpanda_idx(const iceberg::struct_type& val_type) {
     return std::nullopt;
 }
 
-std::unique_ptr<iceberg::struct_value> build_rp_struct(
-  model::partition_id pid,
-  kafka::offset o,
-  std::optional<iobuf> key,
-  model::timestamp ts,
-  model::timestamp_type ts_t,
-  const chunked_vector<model::record_header>& headers) {
-    auto system_data = std::make_unique<iceberg::struct_value>();
-    system_data->fields.reserve(6);
-
-    system_data->fields.emplace_back(iceberg::int_value(pid));
-    system_data->fields.emplace_back(iceberg::long_value(o));
-    system_data->fields.emplace_back(
-      iceberg::timestamptz_value(ts.value() * 1000));
-
-    if (headers.empty()) {
-        system_data->fields.emplace_back(std::nullopt);
-    } else {
-        auto headers_list = std::make_unique<iceberg::list_value>();
-        for (const auto& hdr : headers) {
-            auto header_kv_struct = std::make_unique<iceberg::struct_value>();
-            header_kv_struct->fields.emplace_back(
-              hdr.key_size() >= 0 ? std::make_optional<iceberg::value>(
-                                      iceberg::string_value(hdr.key().copy()))
-                                  : std::nullopt);
-            header_kv_struct->fields.emplace_back(
-              hdr.value_size() >= 0
-                ? std::make_optional<iceberg::value>(
-                    iceberg::binary_value(hdr.value().copy()))
-                : std::nullopt);
-            headers_list->elements.emplace_back(std::move(header_kv_struct));
-        }
-        system_data->fields.emplace_back(std::move(headers_list));
-    }
-
-    system_data->fields.emplace_back(
-      key ? std::make_optional<iceberg::value>(
-              iceberg::binary_value(std::move(*key)))
-          : std::nullopt);
-
-    system_data->fields.emplace_back(
-      iceberg::int_value{static_cast<int32_t>(ts_t)});
-
-    return system_data;
-}
-
 /// Find a field by name in a struct_type and return its index.
 std::optional<size_t>
 find_field_idx(const iceberg::struct_type& st, std::string_view name) {
@@ -219,11 +173,13 @@ debezium_envelope_to_table_type(const iceberg::struct_type& envelope_type) {
 
     for (auto& field : inner_type.fields) {
         if (field->name == rp_struct_name) {
-            auto& system_fields = std::get<iceberg::struct_type>(
-              ret_type.fields[0]->type);
+            auto& system_fields = rp_struct_type(ret_type);
             system_fields.fields.emplace_back(
               iceberg::nested_field::create(
-                10, "data", field->required, std::move(field->type)));
+                schemaless_next_field_id,
+                "data",
+                field->required,
+                std::move(field->type)));
             continue;
         }
         ret_type.fields.emplace_back(std::move(field));
@@ -409,10 +365,7 @@ debezium_translator::translate_data(
         for (size_t i = 0; i < inner->fields.size(); ++i) {
             auto& field = inner->fields[i];
             if (redpanda_field_idx == i) {
-                auto& system_vals
-                  = std::get<std::unique_ptr<iceberg::struct_value>>(
-                    ret_data.fields[0].value());
-                system_vals->fields.emplace_back(std::move(field));
+                rp_struct_value(ret_data).fields.emplace_back(std::move(field));
                 continue;
             }
             ret_data.fields.emplace_back(std::move(field));
