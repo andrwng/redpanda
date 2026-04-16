@@ -58,13 +58,13 @@ struct column_stat_entry
         };
     }
 
-    friend bool operator==(const column_stat_entry&, const column_stat_entry&)
-      = default;
+    friend bool
+    operator==(const column_stat_entry&, const column_stat_entry&) = default;
 };
 
 // Represents a file that exists in object storage.
 struct data_file
-  : serde::envelope<data_file, serde::version<2>, serde::compat_version<0>> {
+  : serde::envelope<data_file, serde::version<4>, serde::compat_version<0>> {
     auto serde_fields() {
         return std::tie(
           remote_path,
@@ -75,7 +75,9 @@ struct data_file
           partition_spec_id,
           partition_key,
           column_stats,
-          split_offsets);
+          split_offsets,
+          delete_key_field_ids,
+          is_delete);
     }
     ss::sstring remote_path = "";
     size_t row_count = 0;
@@ -99,6 +101,15 @@ struct data_file
     // readers to split work across row group boundaries.
     std::optional<chunked_vector<int64_t>> split_offsets;
 
+    // When set, this file participates in upsert/delete operations.
+    // These field IDs identify the key columns for deduplication.
+    // When nullopt: regular insert (append-only).
+    std::optional<chunked_vector<int32_t>> delete_key_field_ids;
+
+    // True when this file is an equality delete file (contains only
+    // key values for deletion). False for data files.
+    bool is_delete{false};
+
     data_file copy() const {
         data_file ret{
           .remote_path = remote_path,
@@ -120,6 +131,10 @@ struct data_file
         if (split_offsets) {
             ret.split_offsets = split_offsets->copy();
         }
+        if (delete_key_field_ids) {
+            ret.delete_key_field_ids = delete_key_field_ids->copy();
+        }
+        ret.is_delete = is_delete;
         return ret;
     }
 

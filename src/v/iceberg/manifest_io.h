@@ -54,6 +54,9 @@ public:
 
     ss::future<checked<size_t, metadata_io::errc>>
     upload_manifest_list(const uri& path, const manifest_list&);
+
+    ss::future<checked<iobuf, metadata_io::errc>>
+    download_object_bytes(const uri& uri);
 };
 
 } // namespace iceberg
