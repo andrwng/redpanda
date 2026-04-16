@@ -5,6 +5,119 @@ load("//bazel:build.bzl", "redpanda_cc_binary")
 load("//bazel:test.bzl", "redpanda_cc_bench", "redpanda_cc_gtest")
 
 redpanda_cc_gtest(
+    name = "reader_test",
+    timeout = "short",
+    srcs = [
+        "reader_test.cc",
+    ],
+    cpu = 1,
+    memory = "128MiB",
+    deps = [
+        "//src/v/bytes:iostream",
+        "//src/v/serde/parquet:reader",
+        "//src/v/serde/parquet:schema",
+        "//src/v/serde/parquet:value",
+        "//src/v/serde/parquet:writer",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "assembler_test",
+    timeout = "short",
+    srcs = [
+        "assembler_test.cc",
+    ],
+    cpu = 1,
+    memory = "128MiB",
+    deps = [
+        "//src/v/serde/parquet:assembler",
+        "//src/v/serde/parquet:column_array",
+        "//src/v/serde/parquet:encoding",
+        "//src/v/serde/parquet:schema",
+        "//src/v/serde/parquet:shredder",
+        "//src/v/serde/parquet:value",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "column_chunk_reader_test",
+    timeout = "short",
+    srcs = [
+        "column_chunk_reader_test.cc",
+    ],
+    cpu = 1,
+    memory = "128MiB",
+    deps = [
+        "//src/v/bytes:iostream",
+        "//src/v/serde/parquet:column_chunk_reader",
+        "//src/v/serde/parquet:column_writer",
+        "//src/v/serde/parquet:encoding",
+        "//src/v/serde/parquet:metadata",
+        "//src/v/serde/parquet:schema",
+        "//src/v/serde/parquet:value",
+        "//src/v/serde/parquet:writer",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "column_array_test",
+    timeout = "short",
+    srcs = [
+        "column_array_test.cc",
+    ],
+    cpu = 1,
+    memory = "64MiB",
+    deps = [
+        "//src/v/serde/parquet:column_array",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "metadata_roundtrip_test",
+    timeout = "short",
+    srcs = [
+        "metadata_roundtrip_test.cc",
+    ],
+    cpu = 1,
+    memory = "128MiB",
+    deps = [
+        "//src/v/serde/parquet:metadata",
+        "//src/v/serde/parquet:schema",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "flattened_schema_test",
+    timeout = "short",
+    srcs = [
+        "flattened_schema_test.cc",
+    ],
+    cpu = 1,
+    memory = "64MiB",
+    deps = [
+        "//src/v/serde/parquet:schema",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
     name = "value_test",
     timeout = "short",
     srcs = [

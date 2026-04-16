@@ -35,6 +35,7 @@ redpanda_cc_library(
         ":schema",
         "//src/v/base",
         "//src/v/bytes:iobuf",
+        "//src/v/bytes:iobuf_parser",
         "//src/v/container:chunked_vector",
         "//src/v/hashing:crc32",
         "//src/v/serde/thrift:compact",
@@ -64,6 +65,88 @@ redpanda_cc_library(
 )
 
 redpanda_cc_library(
+    name = "reader",
+    srcs = [
+        "reader.cc",
+    ],
+    hdrs = [
+        "reader.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":assembler",
+        ":column_array",
+        ":column_chunk_reader",
+        ":metadata",
+        ":schema",
+        ":value",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/bytes:iobuf_parser",
+        "//src/v/container:chunked_vector",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "assembler",
+    srcs = [
+        "assembler.cc",
+    ],
+    hdrs = [
+        "assembler.h",
+    ],
+    deps = [
+        ":column_array",
+        ":schema",
+        ":value",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/container:chunked_vector",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "column_chunk_reader",
+    srcs = [
+        "column_chunk_reader.cc",
+    ],
+    hdrs = [
+        "column_chunk_reader.h",
+    ],
+    deps = [
+        ":column_array",
+        ":encoding",
+        ":metadata",
+        ":schema",
+        ":value",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/bytes:iobuf_parser",
+        "//src/v/compression",
+        "//src/v/container:chunked_vector",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_library(
+    name = "column_array",
+    srcs = [
+        "column_array.cc",
+    ],
+    hdrs = [
+        "column_array.h",
+    ],
+    deps = [
+        ":schema",
+        "//src/v/base",
+        "//src/v/bytes:iobuf",
+        "//src/v/container:chunked_vector",
+    ],
+)
+
+redpanda_cc_library(
     name = "encoding",
     srcs = [
         "encoding.cc",
@@ -76,8 +159,10 @@ redpanda_cc_library(
         ":value",
         "//src/v/base",
         "//src/v/bytes:iobuf",
+        "//src/v/bytes:iobuf_parser",
         "//src/v/container:chunked_vector",
         "//src/v/utils:vint",
+        "@seastar",
     ],
 )
 
@@ -135,7 +220,6 @@ redpanda_cc_library(
     ],
     implementation_deps = [
         ":column_writer",
-        ":metadata",
         ":shredder",
         "//src/v/bytes:iobuf",
         "//src/v/bytes:iostream",
@@ -144,6 +228,7 @@ redpanda_cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":metadata",
         ":schema",
         ":value",
         "//src/v/base",
