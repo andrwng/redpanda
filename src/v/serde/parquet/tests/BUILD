@@ -288,6 +288,93 @@ write_file(
 ]
 
 redpanda_cc_gtest(
+    name = "variant_encoding_test",
+    timeout = "short",
+    srcs = ["variant_encoding_test.cc"],
+    cpu = 1,
+    memory = "128MiB",
+    deps = [
+        "//src/v/bytes:iobuf",
+        "//src/v/bytes:iobuf_parser",
+        "//src/v/serde/parquet:variant_encoding",
+        "//src/v/serde/parquet:variant_value",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "variant_value_test",
+    timeout = "short",
+    srcs = ["variant_value_test.cc"],
+    cpu = 1,
+    memory = "64MiB",
+    deps = [
+        "//src/v/bytes:iobuf",
+        "//src/v/serde/parquet:variant_value",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "variant_shredder_test",
+    timeout = "short",
+    srcs = ["variant_shredder_test.cc"],
+    cpu = 1,
+    memory = "64MiB",
+    deps = [
+        "//src/v/bytes:iobuf",
+        "//src/v/serde/parquet:variant_shredder",
+        "//src/v/serde/parquet:variant_value",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "variant_json_test",
+    timeout = "short",
+    srcs = ["variant_json_test.cc"],
+    cpu = 1,
+    memory = "64MiB",
+    deps = [
+        "//src/v/bytes:iobuf",
+        "//src/v/serde/parquet:variant_encoding",
+        "//src/v/serde/parquet:variant_json",
+        "//src/v/serde/parquet:variant_value",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
+    name = "variant_integration_test",
+    timeout = "short",
+    srcs = ["variant_integration_test.cc"],
+    cpu = 1,
+    memory = "128MiB",
+    deps = [
+        "//src/v/bytes:iostream",
+        "//src/v/serde/parquet:reader",
+        "//src/v/serde/parquet:schema",
+        "//src/v/serde/parquet:value",
+        "//src/v/serde/parquet:variant_encoding",
+        "//src/v/serde/parquet:variant_json",
+        "//src/v/serde/parquet:variant_schema",
+        "//src/v/serde/parquet:variant_value",
+        "//src/v/serde/parquet:writer",
+        "//src/v/test_utils:gtest",
+        "@googletest//:gtest",
+        "@seastar",
+    ],
+)
+
+redpanda_cc_gtest(
     name = "encoding_test",
     timeout = "short",
     srcs = [

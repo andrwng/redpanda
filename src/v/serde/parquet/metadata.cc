@@ -225,6 +225,7 @@ iobuf encode(const flattened_schema& schema, bool is_root) {
         bson = 13,
         uuid = 14,
         float16 = 15,
+        variant = 16,
     };
 
     thrift::struct_encoder logical_type_encoder;
@@ -291,6 +292,12 @@ iobuf encode(const flattened_schema& schema, bool is_root) {
       [&](const f16_type&) {
           logical_type_encoder.write_field(
             thrift::field_id(logical_type::float16),
+            thrift::field_type::structure,
+            thrift::struct_encoder::empty_struct);
+      },
+      [&](const variant_type&) {
+          logical_type_encoder.write_field(
+            thrift::field_id(logical_type::variant),
             thrift::field_type::structure,
             thrift::struct_encoder::empty_struct);
       },
@@ -1048,6 +1055,7 @@ logical_type decode_logical_type(iobuf_parser_base& parser) {
         bson = 13,
         uuid = 14,
         float16 = 15,
+        variant = 16,
     };
 
     logical_type result;
@@ -1171,6 +1179,10 @@ logical_type decode_logical_type(iobuf_parser_base& parser) {
             break;
         case logical_type_id::float16:
             result = f16_type();
+            dec.skip_field(hdr->type);
+            break;
+        case logical_type_id::variant:
+            result = variant_type();
             dec.skip_field(hdr->type);
             break;
         default:

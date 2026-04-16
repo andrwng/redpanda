@@ -112,7 +112,8 @@ field_type parse_type(const json::Value& v) {
           .match("timestamptz", timestamptz_type{})
           .match("string", string_type{})
           .match("uuid", uuid_type{})
-          .match("binary", binary_type{});
+          .match("binary", binary_type{})
+          .match("variant", variant_type{});
     }
     if (!v.IsObject()) {
         throw std::invalid_argument("Expected string or object for type field");
@@ -159,6 +160,7 @@ public:
         w.String(fmt::format("fixed[{}]", t.length));
     }
     void operator()(const iceberg::binary_type&) { w.String("binary"); }
+    void operator()(const iceberg::variant_type&) { w.String("variant"); }
 
     void operator()(const iceberg::primitive_type& t) { rjson_serialize(w, t); }
     void operator()(const iceberg::struct_type& t) { rjson_serialize(w, t); }

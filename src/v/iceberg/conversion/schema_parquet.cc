@@ -10,6 +10,7 @@
 
 #include "iceberg/datatypes.h"
 #include "serde/parquet/schema.h"
+#include "serde/parquet/variant_schema.h"
 
 namespace iceberg {
 namespace {
@@ -112,6 +113,12 @@ struct primitive_type_converting_visitor {
         return serde::parquet::schema_element{
           .type = serde::parquet::byte_array_type{},
         };
+    }
+    serde::parquet::schema_element operator()(const iceberg::variant_type&) {
+        auto res = serde::parquet::build_variant_schema(
+          "", serde::parquet::field_repetition_type::optional);
+        res.path.clear();
+        return res;
     }
 };
 
