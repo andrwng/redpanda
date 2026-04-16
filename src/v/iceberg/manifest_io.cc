@@ -102,4 +102,16 @@ manifest_io::download_object_bytes(const uri& uri) {
       path_res.value(), "iceberg::data_file", [](iobuf buf) { return buf; });
 }
 
+ss::future<checked<size_t, metadata_io::errc>>
+manifest_io::upload_object_bytes(const uri& uri, iobuf data) {
+    auto path_res = from_uri(uri);
+    if (path_res.has_error()) {
+        co_return path_res.error();
+    }
+    co_return co_await upload_object<iobuf>(
+      path_res.value(), data, "iceberg::data_file", [](const iobuf& buf) {
+          return buf.copy();
+      });
+}
+
 } // namespace iceberg
