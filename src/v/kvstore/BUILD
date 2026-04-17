@@ -68,7 +68,7 @@ redpanda_cc_library(
         "//src/v/crypto",
         "//src/v/kafka/data:partition_proxy",
         "//src/v/kafka/utils:txn_reader",
-        "//src/v/lsm/io:cloud_persistence",
+        "//src/v/lsm/io:cloud_cache_persistence",
         "//src/v/lsm/io:persistence",
         "//src/v/model:batch_builder",
         "//src/v/model:batch_compression",
@@ -98,7 +98,6 @@ redpanda_cc_library(
         ":db_impl",
         ":logger",
         "//src/v/cloud_storage_clients",
-        "//src/v/config",
     ],
     visibility = ["//visibility:public"],
     deps = [

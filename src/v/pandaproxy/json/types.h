@@ -49,8 +49,6 @@ inline std::string_view name(serialization_format fmt) {
         return "application/json";
     case pandaproxy::json::serialization_format::application_octet:
         return "application/octet-stream";
-    case pandaproxy::json::serialization_format::application_proto:
-        return "application/proto";
     case pandaproxy::json::serialization_format::unsupported:
         return "unsupported";
     }

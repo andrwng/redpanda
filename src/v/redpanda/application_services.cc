@@ -10,7 +10,6 @@
 #include "base/vlog.h"
 #include "cloud_io/cache_service.h"
 #include "cloud_io/remote.h"
-#include "kvstore/app.h"
 #include "cloud_storage/configuration.h"
 #include "cloud_storage/inventory/inv_ops.h"
 #include "cloud_storage/inventory/types.h"
@@ -57,6 +56,7 @@
 #include "kafka/server/quota_manager.h"
 #include "kafka/server/rm_group_frontend.h"
 #include "kafka/server/snc_quota_manager.h"
+#include "kvstore/app.h"
 #include "net/dns.h"
 #include "net/tls_certificate_probe.h"
 #include "raft/coordinated_recovery_throttle.h"
@@ -406,12 +406,13 @@ void application::wire_up_redpanda_services(
               .get();
         });
     }
-    if (config::shard_local_cfg().enable_kvstore() && !config::node().recovery_mode_enabled()) {
+    if (
+      config::shard_local_cfg().enable_kvstore()
+      && !config::node().recovery_mode_enabled()) {
         vassert(
           archival_storage_enabled(),
           "kvstore requires cloud storage to be enabled");
-        syschecks::systemd_message("Initializing kvstore subsystem")
-          .get();
+        syschecks::systemd_message("Initializing kvstore subsystem").get();
         // NOTE: this only instantiates the app; underlying services are
         // constructed separately once more of the subsystems are available.
         kvstore_app = std::make_unique<kvstore::app>(
@@ -744,6 +745,7 @@ void application::wire_up_redpanda_services(
             &partition_manager,
             &raft_group_manager,
             &controller->get_topics_state(),
+            &shadow_index_cache,
             &cloud_io,
             bucket_name.value())
           .get();

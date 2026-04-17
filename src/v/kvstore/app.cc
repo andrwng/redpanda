@@ -29,6 +29,7 @@ ss::future<> app::construct(
   ss::sharded<cluster::partition_manager>* partition_manager,
   ss::sharded<raft::group_manager>* group_manager,
   ss::sharded<cluster::topic_table>* topic_table,
+  ss::sharded<cloud_io::cache>* cache,
   ss::sharded<cloud_io::remote>* remote,
   cloud_storage_clients::bucket_name bucket) {
     co_await construct_service(
@@ -36,6 +37,7 @@ ss::future<> app::construct(
 
     co_await construct_service(
       manager,
+      ss::sharded_parameter([&cache] { return &cache->local(); }),
       ss::sharded_parameter([&remote] { return &remote->local(); }),
       bucket);
 }

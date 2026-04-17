@@ -17,6 +17,7 @@
 #include <seastar/core/sharded.hh>
 
 namespace cloud_io {
+class cache;
 class remote;
 } // namespace cloud_io
 
@@ -48,6 +49,7 @@ public:
       ss::sharded<cluster::partition_manager>*,
       ss::sharded<raft::group_manager>*,
       ss::sharded<cluster::topic_table>*,
+      ss::sharded<cloud_io::cache>*,
       ss::sharded<cloud_io::remote>*,
       cloud_storage_clients::bucket_name);
 

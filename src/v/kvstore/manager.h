@@ -22,8 +22,9 @@ class partition;
 }
 
 namespace cloud_io {
+class cache;
 class remote;
-}
+} // namespace cloud_io
 
 namespace kvstore {
 
@@ -37,7 +38,8 @@ namespace kvstore {
 // TODO: Handle topic deletion
 class kvstore_manager {
 public:
-    kvstore_manager(cloud_io::remote*, cloud_storage_clients::bucket_name);
+    kvstore_manager(
+      cloud_io::cache*, cloud_io::remote*, cloud_storage_clients::bucket_name);
 
     // Start the manager, must be called before `schedule_partition`
     ss::future<> start();
@@ -73,6 +75,7 @@ private:
     ss::future<>
     do_unschedule_partition(model::ntp ntp, model::topic_id_partition tidp);
 
+    cloud_io::cache* _cache;
     cloud_io::remote* _remote;
     cloud_storage_clients::bucket_name _bucket;
     chunked_hash_map<model::ntp, std::unique_ptr<db>> _dbs;
