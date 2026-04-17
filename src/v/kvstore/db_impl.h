@@ -29,15 +29,15 @@ class db_impl final : public db {
 public:
     db_impl(
       ss::lw_shared_ptr<cluster::partition> partition,
+      cloud_io::cache* cache,
       cloud_io::remote* remote,
       cloud_storage_clients::bucket_name bucket,
-      cloud_storage_clients::object_key prefix,
-      std::filesystem::path staging_dir)
+      cloud_storage_clients::object_key prefix)
       : _partition(std::move(partition))
+      , _cache(cache)
       , _remote(remote)
       , _bucket(std::move(bucket))
-      , _prefix(std::move(prefix))
-      , _staging_dir(std::move(staging_dir)) {}
+      , _prefix(std::move(prefix)) {}
 
     // Start the database
     ss::future<> start() override;
@@ -74,10 +74,10 @@ private:
     ss::future<> replicate(model::record_batch);
 
     ss::lw_shared_ptr<cluster::partition> _partition;
+    cloud_io::cache* _cache;
     cloud_io::remote* _remote;
     cloud_storage_clients::bucket_name _bucket;
     cloud_storage_clients::object_key _prefix;
-    std::filesystem::path _staging_dir;
     ss::gate _gate;
     ss::abort_source _as;
     ssx::mutex _write_mu{"kvstore/db"};

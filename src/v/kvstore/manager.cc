@@ -12,7 +12,6 @@
 
 #include "cloud_storage_clients/types.h"
 #include "cluster/partition.h"
-#include "config/node_config.h"
 #include "kvstore/db.h"
 #include "kvstore/logger.h"
 #include "model/fundamental.h"
@@ -20,11 +19,6 @@
 namespace kvstore {
 
 namespace {
-
-std::filesystem::path local_path(model::topic_id_partition tidp) {
-    return config::node().kvstore_path()
-           / fmt::format("{}/{}", tidp.topic_id(), tidp.partition());
-}
 
 cloud_storage_clients::object_key remote_path(model::topic_id_partition tidp) {
     // TODO: Do we want to prefix with cluster ID?
@@ -35,8 +29,9 @@ cloud_storage_clients::object_key remote_path(model::topic_id_partition tidp) {
 } // namespace
 
 kvstore_manager::kvstore_manager(
-  cloud_io::remote* r, cloud_storage_clients::bucket_name b)
-  : _remote(r)
+  cloud_io::cache* c, cloud_io::remote* r, cloud_storage_clients::bucket_name b)
+  : _cache(c)
+  , _remote(r)
   , _bucket(std::move(b))
   , _queue([](const std::exception_ptr& ex) {
       vlog(kvlog.error, "error in kvstore manager: {}", ex);
@@ -75,11 +70,7 @@ ss::future<> kvstore_manager::do_schedule_partition(
         co_return;
     }
     auto database = db::make(
-      std::move(partition),
-      _remote,
-      _bucket,
-      remote_path(tidp),
-      local_path(tidp));
+      std::move(partition), _cache, _remote, _bucket, remote_path(tidp));
     co_await database->start();
     _dbs.emplace(std::move(ntp), std::move(database));
 }

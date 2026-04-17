@@ -15,7 +15,7 @@
 #include "kafka/data/partition_proxy.h"
 #include "kafka/utils/txn_reader.h"
 #include "kvstore/logger.h"
-#include "lsm/io/cloud_persistence.h"
+#include "lsm/io/cloud_cache_persistence.h"
 #include "lsm/io/persistence.h"
 #include "lsm/lsm.h"
 #include "model/batch_builder.h"
@@ -101,16 +101,16 @@ ss::sstring decode_key(std::string_view s) {
 
 std::unique_ptr<db> db::make(
   ss::lw_shared_ptr<cluster::partition> partition,
+  cloud_io::cache* cache,
   cloud_io::remote* remote,
   cloud_storage_clients::bucket_name bucket,
-  cloud_storage_clients::object_key prefix,
-  std::filesystem::path staging_dir) {
+  cloud_storage_clients::object_key prefix) {
     return std::make_unique<db_impl>(
       std::move(partition),
+      cache,
       remote,
       std::move(bucket),
-      std::move(prefix),
-      std::move(staging_dir));
+      std::move(prefix));
 }
 
 ss::future<> db_impl::start() {
@@ -124,8 +124,8 @@ ss::future<> db_impl::start() {
         co_return;
     }
     _term = _partition->term();
-    auto data = co_await lsm::io::open_cloud_data_persistence(
-      _staging_dir, _remote, _bucket, _prefix);
+    auto data = co_await lsm::io::open_cloud_cache_data_persistence(
+      _cache, _remote, _bucket, _prefix);
     auto metadata = co_await lsm::io::open_cloud_metadata_persistence(
       _remote, _bucket, _prefix);
     _lsm = co_await lsm::database::open(

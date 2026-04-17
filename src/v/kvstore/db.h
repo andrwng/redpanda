@@ -18,10 +18,10 @@
 
 #include <seastar/core/future.hh>
 
-#include <filesystem>
 #include <memory>
 
 namespace cloud_io {
+class cache;
 class remote;
 } // namespace cloud_io
 
@@ -100,10 +100,10 @@ public:
     // Factory method to create a database implementation.
     static std::unique_ptr<db> make(
       ss::lw_shared_ptr<cluster::partition> partition,
+      cloud_io::cache* cache,
       cloud_io::remote* remote,
       cloud_storage_clients::bucket_name bucket,
-      cloud_storage_clients::object_key prefix,
-      std::filesystem::path staging_dir);
+      cloud_storage_clients::object_key prefix);
 
     // Destroy the database contents
     static ss::future<> destroy(
