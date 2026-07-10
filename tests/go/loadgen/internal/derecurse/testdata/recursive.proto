@@ -1,0 +1,10 @@
+syntax = "proto3";
+package demo;
+message Node {
+    string v = 1;
+    Node next = 2;
+    repeated Node kids = 3;
+}
+message Root {
+    Node node = 1;
+}
