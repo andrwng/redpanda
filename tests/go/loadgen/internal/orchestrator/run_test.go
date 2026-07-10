@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/config"
 	"github.com/twmb/franz-go/pkg/kfake"
 )
@@ -86,8 +88,57 @@ func TestRunProduceEndToEnd(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if err := Run(ctx, c, []string{dir}); err != nil {
+	if err := Run(ctx, c, []string{dir}, nil, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRunProduceRecordsPrometheusCounters exercises the metrics wiring: when
+// Run is given non-nil CounterVecs, it must reflect records produced into
+// them before returning, even though the run is far shorter than the
+// sampler's 1s tick - the final flush on the workload's stop channel (see
+// startSampler) is what makes this observable without waiting a full tick.
+func TestRunProduceRecordsPrometheusCounters(t *testing.T) {
+	cluster, err := kfake.NewCluster(kfake.SeedTopics(1, "t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.Close()
+
+	const protoText = `syntax="proto3"; package demo; message Root { string id = 1; int64 n = 2; }`
+
+	sr := newSchemaRegistryMock(t, "t-value", protoText, "PROTOBUF", 1)
+	defer sr.Close()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/s.proto", []byte(protoText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &config.Config{
+		Brokers:        joinAddrs(cluster.ListenAddrs()),
+		SchemaRegistry: sr.URL,
+		Shard:          config.Shard{Count: 1, Index: 0},
+		Workloads: []config.Workload{{
+			Name: "w", Topic: "t", Direction: "produce", Clients: 2,
+			Schema: config.Schema{File: dir + "/s.proto", Format: "protobuf", Message: "demo.Root", Subject: "t-value"},
+			Data:   config.Data{Source: "pre_encoded", PoolSize: 50, Seed: 1},
+		}},
+	}
+	recs := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_records_total"}, []string{"workload"})
+	bytesVec := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_bytes_total"}, []string{"workload"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := Run(ctx, c, []string{dir}, recs, bytesVec); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := testutil.ToFloat64(recs.WithLabelValues("w")); got <= 0 {
+		t.Fatalf("records counter for workload %q = %v, want > 0", "w", got)
+	}
+	if got := testutil.ToFloat64(bytesVec.WithLabelValues("w")); got <= 0 {
+		t.Fatalf("bytes counter for workload %q = %v, want > 0", "w", got)
 	}
 }
 
@@ -122,7 +173,7 @@ func TestRunProduceFreshSource(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if err := Run(ctx, c, []string{dir}); err != nil {
+	if err := Run(ctx, c, []string{dir}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -159,7 +210,7 @@ func TestRunProduceAvroSource(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	if err := Run(ctx, c, []string{dir}); err != nil {
+	if err := Run(ctx, c, []string{dir}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -206,7 +257,7 @@ func TestRunProduceConsumeCoordinatesLag(t *testing.T) {
 	os.Stdout = w
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	runErr := Run(ctx, c, []string{dir})
+	runErr := Run(ctx, c, []string{dir}, nil, nil)
 	os.Stdout = realStdout
 	w.Close()
 	var out bytes.Buffer

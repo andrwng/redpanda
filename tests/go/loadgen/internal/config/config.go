@@ -123,7 +123,7 @@ func (c *Config) Validate() error {
 		if w.Data.Source == "pre_encoded" && w.Data.PoolSize <= 0 {
 			return fmt.Errorf("workload %q: pre_encoded requires pool_size > 0", w.Name)
 		}
-		if w.Schema.Format != "protobuf" && w.Schema.Format != "avro" && w.Schema.Format != "json" {
+		if w.Schema.Format != "protobuf" && w.Schema.Format != "avro" {
 			return fmt.Errorf("workload %q: invalid schema.format %q", w.Name, w.Schema.Format)
 		}
 	}

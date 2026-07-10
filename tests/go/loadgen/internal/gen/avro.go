@@ -11,14 +11,20 @@ package gen
 
 import (
 	"math/rand"
+	"sync"
 
 	"github.com/hamba/avro/v2"
 )
 
 // AvroGen builds random, schema-conforming Avro values for a given schema.
 // Generation is deterministic for a fixed seed.
+//
+// Record is safe for concurrent use: the fresh data-source path (see
+// gen.NewFresh) drives a single AvroGen from every producer goroutine, but
+// math/rand.Rand is not concurrency-safe, so mu serializes access to rnd.
 type AvroGen struct {
 	schema  avro.Schema
+	mu      sync.Mutex
 	rnd     *rand.Rand
 	maxList int
 }
@@ -36,6 +42,8 @@ func NewAvroGen(schemaText string, seed int64, maxList int) (*AvroGen, error) {
 // Record returns a single marshaled, schema-conforming value (binary Avro,
 // no framing).
 func (g *AvroGen) Record() ([]byte, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	v := g.value(g.schema)
 	return avro.Marshal(g.schema, v)
 }

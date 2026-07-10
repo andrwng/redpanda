@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/config"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/consume"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/gen"
@@ -34,7 +35,12 @@ func joinAddrs(a []string) string { return strings.Join(a, ",") }
 // "consume" and "produce_consume" run a consume.Run goroutine. For
 // produce_consume, the consume side waits ConsumeLag before starting so it
 // lags behind the produce side by that amount.
-func Run(ctx context.Context, c *config.Config, importPaths []string) error {
+//
+// recs and bytesVec are the CounterVecs returned by metrics.Serve; each
+// workload goroutine periodically reflects its atomic Counters into them
+// labeled by workload name. Both are nil when metrics are disabled (see
+// startSampler), in which case Run runs exactly as before metrics existed.
+func Run(ctx context.Context, c *config.Config, importPaths []string, recs, bytesVec *prometheus.CounterVec) error {
 	seeds := strings.Split(c.Brokers, ",")
 
 	var wg sync.WaitGroup
@@ -58,7 +64,10 @@ func Run(ctx context.Context, c *config.Config, importPaths []string) error {
 			go func(w config.Workload) {
 				defer wg.Done()
 				start := time.Now()
+				stop, sampleWG := startSampler(recs, bytesVec, w.Name, counters.Sent.Load, counters.Bytes.Load)
 				err := produce.Run(ctx, seeds, w.Topic, src, pacer, w.Clients, &counters)
+				close(stop)
+				sampleWG.Wait()
 				metrics.Report(os.Stdout, w.Name, metrics.Sample{
 					Records: counters.Sent.Load(),
 					Bytes:   counters.Bytes.Load(),
@@ -83,7 +92,10 @@ func Run(ctx context.Context, c *config.Config, importPaths []string) error {
 					}
 				}
 				start := time.Now()
+				stop, sampleWG := startSampler(recs, bytesVec, w.Name, counters.Received.Load, counters.Bytes.Load)
 				err := consume.Run(ctx, seeds, w.Topic, w.Group, w.ConsumeLag, w.Clients, &counters)
+				close(stop)
+				sampleWG.Wait()
 				metrics.Report(os.Stdout, w.Name+"/consume", metrics.Sample{
 					Records: counters.Received.Load(),
 					Bytes:   counters.Bytes.Load(),

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/config"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/derecurse"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/metrics"
@@ -54,13 +55,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(1)
 	}
+	var recs, bytesVec *prometheus.CounterVec
 	if c.MetricsAddr != "" {
-		metrics.Serve(c.MetricsAddr)
+		recs, bytesVec = metrics.Serve(c.MetricsAddr)
 	}
 	// Extra positional args are proto import roots, consulted when
 	// resolving each workload's schema file.
 	importPaths := flag.Args()
-	if err := orchestrator.Run(context.Background(), c, importPaths); err != nil {
+	if err := orchestrator.Run(context.Background(), c, importPaths, recs, bytesVec); err != nil {
 		fmt.Fprintln(os.Stderr, "run error:", err)
 		os.Exit(1)
 	}

@@ -40,6 +40,25 @@ workloads:
 	}
 }
 
+func TestLoadRejectsUnimplementedJSONFormat(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/c.yaml"
+	writeFile(t, path, `
+brokers: rp:9092
+schema_registry: http://rp:8081
+workloads:
+  - name: w1
+    topic: t
+    direction: produce
+    schema: {file: s.proto, format: json, message: M, subject: t-value}
+    data: {source: pre_encoded, pool_size: 10}
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for unimplemented json schema.format")
+	}
+}
+
 func TestLoadDefaultsClientsAndShard(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/c.yaml"

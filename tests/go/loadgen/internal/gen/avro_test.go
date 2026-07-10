@@ -10,6 +10,7 @@
 package gen
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/hamba/avro/v2"
@@ -29,4 +30,30 @@ func TestAvroGenDecodable(t *testing.T) {
 	if err := avro.Unmarshal(avro.MustParse(s), b, &m); err != nil {
 		t.Fatalf("record does not decode: %v", err)
 	}
+}
+
+// TestAvroGenConcurrentRecord mirrors how the fresh data-source path drives
+// a single *AvroGen from every producer goroutine (see gen.NewFresh and
+// orchestrator/run.go). Record must be safe to call concurrently.
+func TestAvroGenConcurrentRecord(t *testing.T) {
+	s := `{"type":"record","name":"R","fields":[{"name":"id","type":"string"},{"name":"n","type":"long"}]}`
+	g, err := NewAvroGen(s, 7, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				if _, err := g.Record(); err != nil {
+					t.Error(err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
