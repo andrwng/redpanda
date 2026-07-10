@@ -16,11 +16,14 @@ import (
 	"os"
 
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/config"
+	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/metrics"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/orchestrator"
 )
 
 func main() {
 	cfgPath := flag.String("config", "", "path to workloads YAML")
+	shardCount := flag.Int("shard.count", 0, "number of load-generator hosts")
+	shardIndex := flag.Int("shard.index", -1, "this host's index in [0,count)")
 	flag.Parse()
 	if *cfgPath == "" {
 		fmt.Fprintln(os.Stderr, "loadgen --config <file>")
@@ -30,6 +33,19 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(1)
+	}
+	if *shardCount > 0 {
+		c.Shard.Count = *shardCount
+	}
+	if *shardIndex >= 0 {
+		c.Shard.Index = *shardIndex
+	}
+	if err := c.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, "config error:", err)
+		os.Exit(1)
+	}
+	if c.MetricsAddr != "" {
+		metrics.Serve(c.MetricsAddr)
 	}
 	// Extra positional args are proto import roots, consulted when
 	// resolving each workload's schema file.
