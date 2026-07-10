@@ -109,6 +109,15 @@ func Run(ctx context.Context, c *config.Config, importPaths []string) error {
 // records up front so the producer hot path pays no generation or
 // schema-registry cost while running.
 func newSource(ctx context.Context, c *config.Config, w config.Workload, importPaths []string) (gen.RecordSource, error) {
+	switch w.Schema.Format {
+	case "avro":
+		return newAvroSource(ctx, c, w)
+	default:
+		return newProtobufSource(ctx, c, w, importPaths)
+	}
+}
+
+func newProtobufSource(ctx context.Context, c *config.Config, w config.Workload, importPaths []string) (gen.RecordSource, error) {
 	md, err := schema.LoadProto(w.Schema.File, importPaths, w.Schema.Message)
 	if err != nil {
 		return nil, err
@@ -124,6 +133,27 @@ func newSource(ctx context.Context, c *config.Config, w config.Workload, importP
 
 	g := gen.NewProtoGen(md, w.Data.Seed, 100, 3)
 	frame := func(b []byte) []byte { return wire.FrameProtobuf(id, []int{0}, b) }
+	if w.Data.Source == "fresh" {
+		return gen.NewFresh(g.Record, frame), nil
+	}
+	return gen.NewPool(g.Record, frame, w.Data.PoolSize)
+}
+
+func newAvroSource(ctx context.Context, c *config.Config, w config.Workload) (gen.RecordSource, error) {
+	schemaText, err := os.ReadFile(w.Schema.File)
+	if err != nil {
+		return nil, err
+	}
+	id, err := schema.RegisterAvro(ctx, c.SchemaRegistry, w.Schema.Subject, string(schemaText))
+	if err != nil {
+		return nil, err
+	}
+
+	g, err := gen.NewAvroGen(string(schemaText), w.Data.Seed, 3)
+	if err != nil {
+		return nil, err
+	}
+	frame := func(b []byte) []byte { return wire.FrameAvro(id, b) }
 	if w.Data.Source == "fresh" {
 		return gen.NewFresh(g.Record, frame), nil
 	}

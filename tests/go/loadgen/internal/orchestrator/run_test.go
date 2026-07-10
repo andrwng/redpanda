@@ -28,7 +28,7 @@ import (
 // newSchemaRegistryMock models the three-request flow franz-go's
 // sr.Client.CreateSchema performs: POST to register, then a GET by ID and a
 // GET by subject/version to fetch back the full SubjectSchema.
-func newSchemaRegistryMock(t *testing.T, subject, protoText string, id int) *httptest.Server {
+func newSchemaRegistryMock(t *testing.T, subject, schemaText, schemaType string, id int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -43,8 +43,8 @@ func newSchemaRegistryMock(t *testing.T, subject, protoText string, id int) *htt
 				"subject":    subject,
 				"version":    1,
 				"id":         id,
-				"schema":     protoText,
-				"schemaType": "PROTOBUF",
+				"schema":     schemaText,
+				"schemaType": schemaType,
 			}
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -66,7 +66,7 @@ func TestRunProduceEndToEnd(t *testing.T) {
 
 	const protoText = `syntax="proto3"; package demo; message Root { string id = 1; int64 n = 2; }`
 
-	sr := newSchemaRegistryMock(t, "t-value", protoText, 1)
+	sr := newSchemaRegistryMock(t, "t-value", protoText, "PROTOBUF", 1)
 	defer sr.Close()
 
 	dir := t.TempDir()
@@ -102,7 +102,7 @@ func TestRunProduceFreshSource(t *testing.T) {
 
 	const protoText = `syntax="proto3"; package demo; message Root { string id = 1; int64 n = 2; }`
 
-	sr := newSchemaRegistryMock(t, "t-value", protoText, 1)
+	sr := newSchemaRegistryMock(t, "t-value", protoText, "PROTOBUF", 1)
 	defer sr.Close()
 
 	dir := t.TempDir()
@@ -127,6 +127,43 @@ func TestRunProduceFreshSource(t *testing.T) {
 	}
 }
 
+// TestRunProduceAvroSource exercises the "avro" schema format end to end,
+// confirming newSource routes to RegisterAvro/NewAvroGen and frames records
+// with wire.FrameAvro instead of the protobuf path.
+func TestRunProduceAvroSource(t *testing.T) {
+	cluster, err := kfake.NewCluster(kfake.SeedTopics(1, "t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.Close()
+
+	const avroText = `{"type":"record","name":"Root","fields":[{"name":"id","type":"string"},{"name":"n","type":"long"}]}`
+
+	sr := newSchemaRegistryMock(t, "t-value", avroText, "AVRO", 1)
+	defer sr.Close()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/s.avsc", []byte(avroText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &config.Config{
+		Brokers:        joinAddrs(cluster.ListenAddrs()),
+		SchemaRegistry: sr.URL,
+		Shard:          config.Shard{Count: 1, Index: 0},
+		Workloads: []config.Workload{{
+			Name: "w", Topic: "t", Direction: "produce", Clients: 2,
+			Schema: config.Schema{File: dir + "/s.avsc", Format: "avro", Subject: "t-value"},
+			Data:   config.Data{Source: "fresh", Seed: 1},
+		}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := Run(ctx, c, []string{dir}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestRunProduceConsumeCoordinatesLag exercises the produce_consume
 // direction end to end: the produce side writes protobuf records while the
 // consume side, started ConsumeLag after the produce side, joins a consumer
@@ -141,7 +178,7 @@ func TestRunProduceConsumeCoordinatesLag(t *testing.T) {
 
 	const protoText = `syntax="proto3"; package demo; message Root { string id = 1; int64 n = 2; }`
 
-	sr := newSchemaRegistryMock(t, "t-value", protoText, 1)
+	sr := newSchemaRegistryMock(t, "t-value", protoText, "PROTOBUF", 1)
 	defer sr.Close()
 
 	dir := t.TempDir()
