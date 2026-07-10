@@ -10,11 +10,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/config"
+	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/orchestrator"
 )
 
 func main() {
@@ -29,5 +31,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("loaded %d workloads for %s\n", len(c.Workloads), c.Brokers)
+	// Extra positional args are proto import roots, consulted when
+	// resolving each workload's schema file.
+	importPaths := flag.Args()
+	if err := orchestrator.Run(context.Background(), c, importPaths); err != nil {
+		fmt.Fprintln(os.Stderr, "run error:", err)
+		os.Exit(1)
+	}
 }
