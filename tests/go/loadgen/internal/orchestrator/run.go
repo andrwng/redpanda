@@ -41,7 +41,7 @@ func Run(ctx context.Context, c *config.Config, importPaths []string) error {
 	errs := make(chan error, 2*len(c.Workloads))
 	for _, w := range c.Workloads {
 		if w.Direction == "produce" || w.Direction == "produce_consume" {
-			src, err := newPreEncodedSource(ctx, c, w, importPaths)
+			src, err := newSource(ctx, c, w, importPaths)
 			if err != nil {
 				return fmt.Errorf("workload %q: %w", w.Name, err)
 			}
@@ -97,10 +97,12 @@ func Run(ctx context.Context, c *config.Config, importPaths []string) error {
 	return nil
 }
 
-// newPreEncodedSource loads and registers the workload's schema, then bakes
-// a pool of pre-framed records so the producer hot path pays no generation
-// or schema-registry cost while running.
-func newPreEncodedSource(ctx context.Context, c *config.Config, w config.Workload, importPaths []string) (gen.RecordSource, error) {
+// newSource loads and registers the workload's schema, then builds the
+// record source w.Data.Source selects: "fresh" generates and frames a new
+// record on every Next call, while "pre_encoded" bakes a pool of pre-framed
+// records up front so the producer hot path pays no generation or
+// schema-registry cost while running.
+func newSource(ctx context.Context, c *config.Config, w config.Workload, importPaths []string) (gen.RecordSource, error) {
 	md, err := schema.LoadProto(w.Schema.File, importPaths, w.Schema.Message)
 	if err != nil {
 		return nil, err
@@ -116,5 +118,8 @@ func newPreEncodedSource(ctx context.Context, c *config.Config, w config.Workloa
 
 	g := gen.NewProtoGen(md, w.Data.Seed, 100, 3)
 	frame := func(b []byte) []byte { return wire.FrameProtobuf(id, []int{0}, b) }
+	if w.Data.Source == "fresh" {
+		return gen.NewFresh(g.Record, frame), nil
+	}
 	return gen.NewPool(g.Record, frame, w.Data.PoolSize)
 }

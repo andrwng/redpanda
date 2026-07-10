@@ -91,6 +91,42 @@ func TestRunProduceEndToEnd(t *testing.T) {
 	}
 }
 
+// TestRunProduceFreshSource exercises the "fresh" data source end to end,
+// confirming newSource routes to gen.NewFresh instead of the pre_encoded pool.
+func TestRunProduceFreshSource(t *testing.T) {
+	cluster, err := kfake.NewCluster(kfake.SeedTopics(1, "t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.Close()
+
+	const protoText = `syntax="proto3"; package demo; message Root { string id = 1; int64 n = 2; }`
+
+	sr := newSchemaRegistryMock(t, "t-value", protoText, 1)
+	defer sr.Close()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/s.proto", []byte(protoText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &config.Config{
+		Brokers:        joinAddrs(cluster.ListenAddrs()),
+		SchemaRegistry: sr.URL,
+		Shard:          config.Shard{Count: 1, Index: 0},
+		Workloads: []config.Workload{{
+			Name: "w", Topic: "t", Direction: "produce", Clients: 2,
+			Schema: config.Schema{File: dir + "/s.proto", Format: "protobuf", Message: "demo.Root", Subject: "t-value"},
+			Data:   config.Data{Source: "fresh", Seed: 1},
+		}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := Run(ctx, c, []string{dir}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestRunProduceConsumeCoordinatesLag exercises the produce_consume
 // direction end to end: the produce side writes protobuf records while the
 // consume side, started ConsumeLag after the produce side, joins a consumer
