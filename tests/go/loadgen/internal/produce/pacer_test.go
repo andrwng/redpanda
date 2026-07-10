@@ -37,3 +37,18 @@ func TestSteadyPacerLimitsRate(t *testing.T) {
 		t.Fatalf("5 tokens at 100/s should take >=~40ms, took %v", elapsed)
 	}
 }
+
+func TestOscillatingRateAtPhases(t *testing.T) {
+	base := time.Unix(0, 0)
+	clock := base
+	p := NewOscillatingPacer(0, 100, time.Second, "square", func() time.Time { return clock })
+	op := p.(*oscillatingPacer)
+	clock = base // first half => max
+	if r := op.rateAt(clock); r != 100 {
+		t.Fatalf("square first-half rate = %d, want 100", r)
+	}
+	clock = base.Add(600 * time.Millisecond) // second half => min
+	if r := op.rateAt(clock); r != 0 {
+		t.Fatalf("square second-half rate = %d, want 0", r)
+	}
+}

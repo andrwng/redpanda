@@ -46,13 +46,19 @@ func Run(ctx context.Context, c *config.Config, importPaths []string) error {
 				return fmt.Errorf("workload %q: %w", w.Name, err)
 			}
 
-			rate := w.Throughput.Rate / c.Shard.Count
+			var pacer produce.Pacer
+			if w.Throughput.Profile == "oscillating" && w.Throughput.Oscillating != nil {
+				o := w.Throughput.Oscillating
+				pacer = produce.NewOscillatingPacer(o.Min/c.Shard.Count, o.Max/c.Shard.Count, o.Period, o.Shape, nil)
+			} else {
+				pacer = produce.NewSteadyPacer(w.Throughput.Rate / c.Shard.Count)
+			}
 			var counters produce.Counters
 			wg.Add(1)
 			go func(w config.Workload) {
 				defer wg.Done()
 				start := time.Now()
-				err := produce.Run(ctx, seeds, w.Topic, src, produce.NewSteadyPacer(rate), w.Clients, &counters)
+				err := produce.Run(ctx, seeds, w.Topic, src, pacer, w.Clients, &counters)
 				metrics.Report(os.Stdout, w.Name, metrics.Sample{
 					Records: counters.Sent.Load(),
 					Bytes:   counters.Bytes.Load(),
