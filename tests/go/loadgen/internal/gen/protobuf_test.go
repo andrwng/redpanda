@@ -10,6 +10,7 @@
 package gen
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/schema"
@@ -47,4 +48,27 @@ func TestProtoGenDeterministicWithSeed(t *testing.T) {
 	if string(a) != string(b) {
 		t.Fatal("same seed should yield identical records")
 	}
+}
+
+// TestProtoGenConcurrentRecord mirrors how the fresh data-source path drives
+// a single *ProtoGen from every producer goroutine (see gen.NewFresh and
+// orchestrator/run.go). Record must be safe to call concurrently.
+func TestProtoGenConcurrentRecord(t *testing.T) {
+	md := rootDesc(t)
+	g := NewProtoGen(md, 7, 5, 3)
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				if _, err := g.Record(); err != nil {
+					t.Error(err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

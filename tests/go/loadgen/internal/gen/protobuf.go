@@ -11,6 +11,7 @@ package gen
 
 import (
 	"math/rand"
+	"sync"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -21,8 +22,13 @@ import (
 // descriptor. Generation is deterministic for a fixed seed: fields are
 // visited in descriptor order (never map iteration) so the same seed always
 // produces the same byte-for-byte record.
+//
+// Record is safe for concurrent use: the fresh data-source path (see
+// gen.NewFresh) drives a single ProtoGen from every producer goroutine, but
+// math/rand.Rand is not concurrency-safe, so mu serializes access to rnd.
 type ProtoGen struct {
 	md       protoreflect.MessageDescriptor
+	mu       sync.Mutex
 	rnd      *rand.Rand
 	maxDepth int
 	maxList  int
@@ -41,6 +47,8 @@ func NewProtoGen(md protoreflect.MessageDescriptor, seed int64, maxDepth, maxLis
 // MarshalOptions.Deterministic forces a stable field order so that two
 // generators seeded identically produce byte-identical output.
 func (g *ProtoGen) Record() ([]byte, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	msg := g.build(g.md, 0)
 	opts := proto.MarshalOptions{Deterministic: true}
 	return opts.Marshal(msg.Interface())
