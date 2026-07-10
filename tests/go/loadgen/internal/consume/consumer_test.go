@@ -11,6 +11,7 @@ package consume
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -73,5 +74,49 @@ func TestRunWithLagSeeksNearNow(t *testing.T) {
 	_ = Run(ctx, cluster.ListenAddrs(), "t", "g2", time.Hour, 1, &c)
 	if c.Received.Load() == 0 {
 		t.Fatal("expected consumed records with lag seek")
+	}
+}
+
+func TestLatencyFromHeader(t *testing.T) {
+	c := &Counters{}
+	ts := time.Now().Add(-5 * time.Millisecond)
+	c.observe(headerNanos(ts))
+	p50, _ := c.LatencyStats()
+	if p50 < 3*time.Millisecond {
+		t.Fatalf("p50 = %v, expected >=~5ms", p50)
+	}
+}
+
+func TestRunObservesLatencyHeader(t *testing.T) {
+	cluster, err := kfake.NewCluster(kfake.SeedTopics(1, "t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.Close()
+
+	p, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...), kgo.DefaultProduceTopic("t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := time.Now().Add(-5 * time.Millisecond)
+	rec := &kgo.Record{
+		Value: []byte("x"),
+		Headers: []kgo.RecordHeader{{
+			Key:   "lg-ts",
+			Value: []byte(strconv.FormatInt(sent.UnixNano(), 10)),
+		}},
+	}
+	if err := p.ProduceSync(context.Background(), rec).FirstErr(); err != nil {
+		t.Fatal(err)
+	}
+	p.Close()
+
+	var c Counters
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_ = Run(ctx, cluster.ListenAddrs(), "t", "g3", 0, 1, &c)
+	p50, _ := c.LatencyStats()
+	if p50 < 3*time.Millisecond {
+		t.Fatalf("p50 = %v, expected the lg-ts header to be observed (~5ms)", p50)
 	}
 }
