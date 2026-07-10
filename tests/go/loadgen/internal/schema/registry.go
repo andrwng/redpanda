@@ -16,9 +16,12 @@ import (
 )
 
 // RegisterProtobuf registers protoText under subject in the schema registry
-// at srURL, returning the globally unique schema ID assigned by the registry.
-func RegisterProtobuf(ctx context.Context, srURL, subject, protoText string) (int, error) {
-	cl, err := sr.NewClient(sr.URLs(srURL))
+// at srURL, returning the globally unique schema ID assigned by the
+// registry. srOpts is appended after sr.URLs(srURL), letting callers layer
+// on auth/TLS (e.g. from an rpk profile via rpkprofile.Profile.SROpts).
+func RegisterProtobuf(ctx context.Context, srURL, subject, protoText string, srOpts ...sr.ClientOpt) (int, error) {
+	opts := append([]sr.ClientOpt{sr.URLs(srURL)}, srOpts...)
+	cl, err := sr.NewClient(opts...)
 	if err != nil {
 		return 0, err
 	}

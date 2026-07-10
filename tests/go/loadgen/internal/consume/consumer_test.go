@@ -41,7 +41,7 @@ func TestRunConsumesProduced(t *testing.T) {
 	var c Counters
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	_ = Run(ctx, cluster.ListenAddrs(), "t", "g1", 0, 1, &c)
+	_ = Run(ctx, cluster.ListenAddrs(), "t", "g1", 0, 1, &c, nil)
 	if c.Received.Load() == 0 {
 		t.Fatal("expected consumed records")
 	}
@@ -71,7 +71,7 @@ func TestRunWithLagSeeksNearNow(t *testing.T) {
 	var c Counters
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	_ = Run(ctx, cluster.ListenAddrs(), "t", "g2", time.Hour, 1, &c)
+	_ = Run(ctx, cluster.ListenAddrs(), "t", "g2", time.Hour, 1, &c, nil)
 	if c.Received.Load() == 0 {
 		t.Fatal("expected consumed records with lag seek")
 	}
@@ -114,7 +114,7 @@ func TestRunObservesLatencyHeader(t *testing.T) {
 	var c Counters
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	_ = Run(ctx, cluster.ListenAddrs(), "t", "g3", 0, 1, &c)
+	_ = Run(ctx, cluster.ListenAddrs(), "t", "g3", 0, 1, &c, nil)
 	p50, _ := c.LatencyStats()
 	if p50 < 3*time.Millisecond {
 		t.Fatalf("p50 = %v, expected the lg-ts header to be observed (~5ms)", p50)

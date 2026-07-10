@@ -34,7 +34,7 @@ func TestRunProducesToKfake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	err = Run(ctx, cluster.ListenAddrs(), "t", staticSource{}, NewSteadyPacer(0), 2, &c)
+	err = Run(ctx, cluster.ListenAddrs(), "t", staticSource{}, NewSteadyPacer(0), 2, &c, nil)
 	if err != nil && ctx.Err() == nil {
 		t.Fatalf("Run failed: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestRunWithLatencyHeaderStampsSendTime(t *testing.T) {
 	defer cancel()
 
 	before := time.Now().UnixNano()
-	err = Run(ctx, cluster.ListenAddrs(), "t", staticSource{}, NewSteadyPacer(0), 1, &c, WithLatencyHeader())
+	err = Run(ctx, cluster.ListenAddrs(), "t", staticSource{}, NewSteadyPacer(0), 1, &c, nil, WithLatencyHeader())
 	after := time.Now().UnixNano()
 	if err != nil && ctx.Err() == nil {
 		t.Fatalf("Run failed: %v", err)
@@ -109,7 +109,7 @@ func TestRunWithoutLatencyHeaderOmitsHeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	err = Run(ctx, cluster.ListenAddrs(), "t", staticSource{}, NewSteadyPacer(0), 1, &c)
+	err = Run(ctx, cluster.ListenAddrs(), "t", staticSource{}, NewSteadyPacer(0), 1, &c, nil)
 	if err != nil && ctx.Err() == nil {
 		t.Fatalf("Run failed: %v", err)
 	}

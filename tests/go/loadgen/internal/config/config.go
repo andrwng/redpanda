@@ -19,6 +19,7 @@ import (
 
 type Config struct {
 	Brokers        string     `yaml:"brokers"`
+	Profile        string     `yaml:"profile"`
 	SchemaRegistry string     `yaml:"schema_registry"`
 	MetricsAddr    string     `yaml:"metrics_addr"`
 	Shard          Shard      `yaml:"shard"`
@@ -103,8 +104,8 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) Validate() error {
-	if c.Brokers == "" {
-		return fmt.Errorf("brokers required")
+	if c.Brokers == "" && c.Profile == "" {
+		return fmt.Errorf("brokers or profile required")
 	}
 	if c.Shard.Index < 0 || c.Shard.Index >= c.Shard.Count {
 		return fmt.Errorf("shard.index %d out of range [0,%d)", c.Shard.Index, c.Shard.Count)
@@ -114,6 +115,9 @@ func (c *Config) Validate() error {
 		case "produce", "consume", "produce_consume":
 		default:
 			return fmt.Errorf("workload %q: invalid direction %q", w.Name, w.Direction)
+		}
+		if (w.Direction == "produce" || w.Direction == "produce_consume") && c.SchemaRegistry == "" {
+			return fmt.Errorf("workload %q: schema_registry required for direction %q", w.Name, w.Direction)
 		}
 		switch w.Data.Source {
 		case "fresh", "pre_encoded":

@@ -83,7 +83,12 @@ func parseTSHeader(v []byte) (int64, bool) {
 //
 // If lag is positive, consumption starts from the first offset at or after
 // now-lag instead of the group's committed offsets.
-func Run(ctx context.Context, seeds []string, topic, group string, lag time.Duration, clients int, c *Counters) error {
+//
+// extraOpts is appended after the base client options, letting callers
+// layer on auth/TLS (e.g. from an rpk profile via
+// rpkprofile.Profile.KgoOpts) without Run needing to know about it; pass nil
+// when no extra options are needed.
+func Run(ctx context.Context, seeds []string, topic, group string, lag time.Duration, clients int, c *Counters, extraOpts []kgo.Opt) error {
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(seeds...),
 		kgo.ConsumeTopics(topic),
@@ -93,6 +98,7 @@ func Run(ctx context.Context, seeds []string, topic, group string, lag time.Dura
 		at := time.Now().Add(-lag)
 		opts = append(opts, kgo.ConsumeResetOffset(kgo.NewOffset().AfterMilli(at.UnixMilli())))
 	}
+	opts = append(opts, extraOpts...)
 	cl, err := kgo.NewClient(opts...)
 	if err != nil {
 		return err

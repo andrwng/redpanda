@@ -23,8 +23,11 @@ import (
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/gen"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/metrics"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/produce"
+	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/rpkprofile"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/schema"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/wire"
+	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sr"
 )
 
 func joinAddrs(a []string) string { return strings.Join(a, ",") }
@@ -41,13 +44,16 @@ func joinAddrs(a []string) string { return strings.Join(a, ",") }
 // labeled by workload name. Both are nil when metrics are disabled (see
 // startSampler), in which case Run runs exactly as before metrics existed.
 func Run(ctx context.Context, c *config.Config, importPaths []string, recs, bytesVec *prometheus.CounterVec) error {
-	seeds := strings.Split(c.Brokers, ",")
+	seeds, kgoOpts, srOpts, err := resolveConnection(c)
+	if err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2*len(c.Workloads))
 	for _, w := range c.Workloads {
 		if w.Direction == "produce" || w.Direction == "produce_consume" {
-			src, err := newSource(ctx, c, w, importPaths)
+			src, err := newSource(ctx, c, w, importPaths, srOpts)
 			if err != nil {
 				return fmt.Errorf("workload %q: %w", w.Name, err)
 			}
@@ -65,7 +71,7 @@ func Run(ctx context.Context, c *config.Config, importPaths []string, recs, byte
 				defer wg.Done()
 				start := time.Now()
 				stop, sampleWG := startSampler(recs, bytesVec, w.Name, counters.Sent.Load, counters.Bytes.Load)
-				err := produce.Run(ctx, seeds, w.Topic, src, pacer, w.Clients, &counters)
+				err := produce.Run(ctx, seeds, w.Topic, src, pacer, w.Clients, &counters, kgoOpts)
 				close(stop)
 				sampleWG.Wait()
 				metrics.Report(os.Stdout, w.Name, metrics.Sample{
@@ -93,7 +99,7 @@ func Run(ctx context.Context, c *config.Config, importPaths []string, recs, byte
 				}
 				start := time.Now()
 				stop, sampleWG := startSampler(recs, bytesVec, w.Name+"/consume", counters.Received.Load, counters.Bytes.Load)
-				err := consume.Run(ctx, seeds, w.Topic, w.Group, w.ConsumeLag, w.Clients, &counters)
+				err := consume.Run(ctx, seeds, w.Topic, w.Group, w.ConsumeLag, w.Clients, &counters, kgoOpts)
 				close(stop)
 				sampleWG.Wait()
 				metrics.Report(os.Stdout, w.Name+"/consume", metrics.Sample{
@@ -115,21 +121,46 @@ func Run(ctx context.Context, c *config.Config, importPaths []string, recs, byte
 	return nil
 }
 
+// resolveConnection derives the kafka seed brokers and, when c.Profile is
+// set, the franz-go client options and Schema Registry client options that
+// authenticate against it via an rpk profile (see rpkprofile.Load). Without
+// a profile, seeds come from c.Brokers and both option slices are nil,
+// matching loadgen's behavior before profile support existed.
+func resolveConnection(c *config.Config) (seeds []string, kgoOpts []kgo.Opt, srOpts []sr.ClientOpt, err error) {
+	if c.Profile == "" {
+		return strings.Split(c.Brokers, ","), nil, nil, nil
+	}
+	p, err := rpkprofile.Load(c.Profile)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("load rpk profile %q: %w", c.Profile, err)
+	}
+	kgoOpts, err = p.KgoOpts()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("profile %q: %w", c.Profile, err)
+	}
+	srOpts, err = p.SROpts(c.SchemaRegistry)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("profile %q: %w", c.Profile, err)
+	}
+	return p.KafkaAPI.Brokers, kgoOpts, srOpts, nil
+}
+
 // newSource loads and registers the workload's schema, then builds the
 // record source w.Data.Source selects: "fresh" generates and frames a new
 // record on every Next call, while "pre_encoded" bakes a pool of pre-framed
 // records up front so the producer hot path pays no generation or
-// schema-registry cost while running.
-func newSource(ctx context.Context, c *config.Config, w config.Workload, importPaths []string) (gen.RecordSource, error) {
+// schema-registry cost while running. srOpts authenticates the schema
+// registry client when c.Profile is set (see resolveConnection).
+func newSource(ctx context.Context, c *config.Config, w config.Workload, importPaths []string, srOpts []sr.ClientOpt) (gen.RecordSource, error) {
 	switch w.Schema.Format {
 	case "avro":
-		return newAvroSource(ctx, c, w)
+		return newAvroSource(ctx, c, w, srOpts)
 	default:
-		return newProtobufSource(ctx, c, w, importPaths)
+		return newProtobufSource(ctx, c, w, importPaths, srOpts)
 	}
 }
 
-func newProtobufSource(ctx context.Context, c *config.Config, w config.Workload, importPaths []string) (gen.RecordSource, error) {
+func newProtobufSource(ctx context.Context, c *config.Config, w config.Workload, importPaths []string, srOpts []sr.ClientOpt) (gen.RecordSource, error) {
 	md, err := schema.LoadProto(w.Schema.File, importPaths, w.Schema.Message)
 	if err != nil {
 		return nil, err
@@ -138,7 +169,7 @@ func newProtobufSource(ctx context.Context, c *config.Config, w config.Workload,
 	if err != nil {
 		return nil, err
 	}
-	id, err := schema.RegisterProtobuf(ctx, c.SchemaRegistry, w.Schema.Subject, string(protoText))
+	id, err := schema.RegisterProtobuf(ctx, c.SchemaRegistry, w.Schema.Subject, string(protoText), srOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -151,12 +182,12 @@ func newProtobufSource(ctx context.Context, c *config.Config, w config.Workload,
 	return gen.NewPool(g.Record, frame, w.Data.PoolSize)
 }
 
-func newAvroSource(ctx context.Context, c *config.Config, w config.Workload) (gen.RecordSource, error) {
+func newAvroSource(ctx context.Context, c *config.Config, w config.Workload, srOpts []sr.ClientOpt) (gen.RecordSource, error) {
 	schemaText, err := os.ReadFile(w.Schema.File)
 	if err != nil {
 		return nil, err
 	}
-	id, err := schema.RegisterAvro(ctx, c.SchemaRegistry, w.Schema.Subject, string(schemaText))
+	id, err := schema.RegisterAvro(ctx, c.SchemaRegistry, w.Schema.Subject, string(schemaText), srOpts...)
 	if err != nil {
 		return nil, err
 	}

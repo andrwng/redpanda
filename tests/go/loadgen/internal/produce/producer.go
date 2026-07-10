@@ -50,19 +50,24 @@ func WithLatencyHeader() Option {
 
 // Run produces records pulled from src to topic on the cluster reachable via
 // seeds, using clients concurrent kgo clients each paced by pacer, until ctx
-// is done.
-func Run(ctx context.Context, seeds []string, topic string, src gen.RecordSource, pacer Pacer, clients int, c *Counters, opts ...Option) error {
+// is done. extraOpts is appended after the base client options, letting
+// callers layer on auth/TLS (e.g. from an rpk profile via
+// rpkprofile.Profile.KgoOpts) without Run needing to know about it; pass nil
+// when no extra options are needed.
+func Run(ctx context.Context, seeds []string, topic string, src gen.RecordSource, pacer Pacer, clients int, c *Counters, extraOpts []kgo.Opt, opts ...Option) error {
 	var ro runOpts
 	for _, opt := range opts {
 		opt(&ro)
 	}
-	cl, err := kgo.NewClient(
+	baseOpts := []kgo.Opt{
 		kgo.SeedBrokers(seeds...),
 		kgo.DefaultProduceTopic(topic),
 		kgo.RequiredAcks(kgo.LeaderAck()),
 		kgo.DisableIdempotentWrite(),
 		kgo.ProducerBatchCompression(kgo.NoCompression()),
-	)
+	}
+	baseOpts = append(baseOpts, extraOpts...)
+	cl, err := kgo.NewClient(baseOpts...)
 	if err != nil {
 		return err
 	}

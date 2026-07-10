@@ -15,12 +15,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/config"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/derecurse"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/metrics"
 	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/orchestrator"
+	"github.com/redpanda-data/redpanda/tests/go/loadgen/internal/rpkprofile"
 )
 
 func main() {
@@ -35,6 +37,8 @@ func main() {
 	cfgPath := flag.String("config", "", "path to workloads YAML")
 	shardCount := flag.Int("shard.count", 0, "number of load-generator hosts")
 	shardIndex := flag.Int("shard.index", -1, "this host's index in [0,count)")
+	profileFlag := flag.String("profile", "", "rpk profile to pull brokers/SASL/TLS from (overrides config's profile:)")
+	check := flag.Bool("check", false, "resolve and print the connection settings (brokers, TLS, SASL, schema registry auth), then exit without connecting")
 	flag.Parse()
 	if *cfgPath == "" {
 		fmt.Fprintln(os.Stderr, "loadgen --config <file>")
@@ -45,6 +49,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(1)
 	}
+	if *profileFlag != "" {
+		c.Profile = *profileFlag
+	}
 	if *shardCount > 0 {
 		c.Shard.Count = *shardCount
 	}
@@ -54,6 +61,13 @@ func main() {
 	if err := c.Validate(); err != nil {
 		fmt.Fprintln(os.Stderr, "config error:", err)
 		os.Exit(1)
+	}
+	if *check {
+		if err := printResolvedConnection(c); err != nil {
+			fmt.Fprintln(os.Stderr, "check error:", err)
+			os.Exit(1)
+		}
+		return
 	}
 	var recs, bytesVec *prometheus.CounterVec
 	if c.MetricsAddr != "" {
@@ -66,6 +80,50 @@ func main() {
 		fmt.Fprintln(os.Stderr, "run error:", err)
 		os.Exit(1)
 	}
+}
+
+// printResolvedConnection prints, without connecting to anything, the
+// brokers/TLS/SASL/schema-registry-auth settings --check would use to run
+// c: brokers and whether Kafka TLS/SASL are enabled (the SASL mechanism and
+// user, never the password), plus the schema registry URL and whether it
+// will use basic auth and/or TLS. This is how a user verifies loadgen's
+// --profile mapping against their real rpk profile before running a
+// workload against a real cluster.
+func printResolvedConnection(c *config.Config) error {
+	var brokers []string
+	var tlsEnabled bool
+	var sasl *rpkprofile.SASL
+	if c.Profile != "" {
+		p, err := rpkprofile.Load(c.Profile)
+		if err != nil {
+			return fmt.Errorf("load rpk profile %q: %w", c.Profile, err)
+		}
+		brokers = p.KafkaAPI.Brokers
+		tlsEnabled = p.KafkaAPI.TLS != nil
+		sasl = p.KafkaAPI.SASL
+	} else {
+		brokers = strings.Split(c.Brokers, ",")
+	}
+
+	fmt.Printf("brokers: %s\n", strings.Join(brokers, ","))
+	if tlsEnabled {
+		fmt.Println("tls: enabled")
+	} else {
+		fmt.Println("tls: disabled")
+	}
+	if sasl != nil {
+		fmt.Printf("sasl: mechanism=%s user=%s\n", sasl.Mechanism, sasl.User)
+	} else {
+		fmt.Println("sasl: disabled")
+	}
+
+	if c.SchemaRegistry != "" {
+		srTLS := tlsEnabled || strings.HasPrefix(c.SchemaRegistry, "https://")
+		fmt.Printf("schema_registry: %s (basic_auth=%t tls=%t)\n", c.SchemaRegistry, sasl != nil, srTLS)
+	} else {
+		fmt.Println("schema_registry: (none configured)")
+	}
+	return nil
 }
 
 // repeatableFlag collects every occurrence of a flag that may be passed more
