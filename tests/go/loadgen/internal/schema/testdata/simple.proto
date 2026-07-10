@@ -1,0 +1,11 @@
+syntax = "proto3";
+package demo;
+message Inner {
+    string label = 1;
+    int64 big = 2;
+}
+message Root {
+    string id = 1;
+    Inner inner = 2;
+    repeated Inner items = 3;
+}
