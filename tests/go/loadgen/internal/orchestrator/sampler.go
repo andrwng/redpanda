@@ -31,7 +31,7 @@ import (
 func startSampler(recs, bytesVec *prometheus.CounterVec, name string, sentFn, bytesFn func() int64) (stop chan struct{}, wg *sync.WaitGroup) {
 	stop = make(chan struct{})
 	wg = &sync.WaitGroup{}
-	if recs == nil {
+	if recs == nil || bytesVec == nil {
 		return stop, wg
 	}
 	wg.Add(1)
@@ -52,11 +52,15 @@ func sampleLoop(stop <-chan struct{}, recs, bytesVec *prometheus.CounterVec, nam
 	var lastSent, lastBytes int64
 	flush := func() {
 		if s := sentFn(); s > lastSent {
-			recs.WithLabelValues(name).Add(float64(s - lastSent))
+			if recs != nil {
+				recs.WithLabelValues(name).Add(float64(s - lastSent))
+			}
 			lastSent = s
 		}
 		if b := bytesFn(); b > lastBytes {
-			bytesVec.WithLabelValues(name).Add(float64(b - lastBytes))
+			if bytesVec != nil {
+				bytesVec.WithLabelValues(name).Add(float64(b - lastBytes))
+			}
 			lastBytes = b
 		}
 	}

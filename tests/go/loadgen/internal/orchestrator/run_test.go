@@ -274,3 +274,67 @@ func TestRunProduceConsumeCoordinatesLag(t *testing.T) {
 		t.Fatalf("expected consume side to receive records, got: %s", out.String())
 	}
 }
+
+// TestRunProduceConsumeSeparatesPrometheusLabels exercises a produce_consume
+// workload's metrics wiring end to end: the produce side must be tracked
+// under the workload name while the consume side must land under
+// "<name>/consume", matching the stdout Report labels. Before the fix both
+// samplers were started with the same label, so the produce and consume
+// deltas were merged into one series and "<name>/consume" was never touched;
+// asserting it is > 0 here is what pins that regression. The run is long
+// enough to observe both the sampler's periodic 1s tick and its final flush
+// on stop, not just the final flush alone (see
+// TestRunProduceRecordsPrometheusCounters for a final-flush-only check).
+func TestRunProduceConsumeSeparatesPrometheusLabels(t *testing.T) {
+	cluster, err := kfake.NewCluster(kfake.SeedTopics(1, "t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cluster.Close()
+
+	const protoText = `syntax="proto3"; package demo; message Root { string id = 1; int64 n = 2; }`
+
+	sr := newSchemaRegistryMock(t, "t-value", protoText, "PROTOBUF", 1)
+	defer sr.Close()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/s.proto", []byte(protoText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &config.Config{
+		Brokers:        joinAddrs(cluster.ListenAddrs()),
+		SchemaRegistry: sr.URL,
+		Shard:          config.Shard{Count: 1, Index: 0},
+		Workloads: []config.Workload{{
+			Name: "w", Topic: "t", Direction: "produce_consume", Clients: 2,
+			Group: "g", ConsumeLag: 100 * time.Millisecond,
+			Schema: config.Schema{File: dir + "/s.proto", Format: "protobuf", Message: "demo.Root", Subject: "t-value"},
+			Data:   config.Data{Source: "pre_encoded", PoolSize: 50, Seed: 1},
+		}},
+	}
+	recs := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_records_total"}, []string{"workload"})
+	bytesVec := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "test_bytes_total"}, []string{"workload"})
+
+	// Long enough that, past the 100ms consume lag, the consume-side
+	// sampler is still running well past its first 1s tick before ctx
+	// cancellation triggers the final flush.
+	ctx, cancel := context.WithTimeout(context.Background(), 1800*time.Millisecond)
+	defer cancel()
+	if err := Run(ctx, c, []string{dir}, recs, bytesVec); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := testutil.ToFloat64(recs.WithLabelValues("w")); got <= 0 {
+		t.Fatalf("produce records counter for workload %q = %v, want > 0", "w", got)
+	}
+	if got := testutil.ToFloat64(bytesVec.WithLabelValues("w")); got <= 0 {
+		t.Fatalf("produce bytes counter for workload %q = %v, want > 0", "w", got)
+	}
+	if got := testutil.ToFloat64(recs.WithLabelValues("w/consume")); got <= 0 {
+		t.Fatalf("consume records counter for workload %q = %v, want > 0 (distinct from produce series)", "w/consume", got)
+	}
+	if got := testutil.ToFloat64(bytesVec.WithLabelValues("w/consume")); got <= 0 {
+		t.Fatalf("consume bytes counter for workload %q = %v, want > 0 (distinct from produce series)", "w/consume", got)
+	}
+}

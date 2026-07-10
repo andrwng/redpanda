@@ -92,7 +92,7 @@ func Run(ctx context.Context, c *config.Config, importPaths []string, recs, byte
 					}
 				}
 				start := time.Now()
-				stop, sampleWG := startSampler(recs, bytesVec, w.Name, counters.Received.Load, counters.Bytes.Load)
+				stop, sampleWG := startSampler(recs, bytesVec, w.Name+"/consume", counters.Received.Load, counters.Bytes.Load)
 				err := consume.Run(ctx, seeds, w.Topic, w.Group, w.ConsumeLag, w.Clients, &counters)
 				close(stop)
 				sampleWG.Wait()
