@@ -198,26 +198,58 @@ func Verify(files []protoreflect.FileDescriptor) (cycles int, maxDepth int) {
 	return cycles, maxDepth
 }
 
-// declRe matches a trimmed "message Foo" or "enum Foo" header with the
-// opening brace already stripped off.
-var declRe = regexp.MustCompile(`^(message|enum)\s+(\w+)$`)
+// declRe matches a trimmed "message Foo", "enum Foo", or "oneof Foo" header
+// with the opening brace already stripped off.
+var declRe = regexp.MustCompile(`^(message|enum|oneof)\s+(\w+)$`)
 
-// rewriteFrame is one level of the message/enum/other brace stack tracked
-// while rewriting proto source text. Every '{' pushes a frame (kind is
-// "other" for constructs derecurse doesn't care about, e.g. oneof or a
-// message-literal option value) so that every '}' pops the matching one;
-// only "message" frames matter for locating field statements to cut.
+// stripLineComments removes every "// ..." line comment from s, preserving
+// line breaks so a multi-line declaration split across real code lines still
+// matches declRe afterwards. It is a plain textual scan, not a tokenizer, so
+// a literal "//" inside a string (e.g. a URL in an option value) would be
+// misread as a comment; that never occurs in the text directly preceding a
+// message/enum/oneof declaration, which is all this is used for.
+func stripLineComments(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if idx := strings.Index(line, "//"); idx >= 0 {
+			lines[i] = line[:idx]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// rewriteFrame is one level of the message/enum/oneof/other brace stack
+// tracked while rewriting proto source text. Every '{' pushes a frame (kind
+// is "other" for constructs derecurse doesn't care about, e.g. a
+// message-literal option value) so that every '}' pops the matching one.
+// "oneof" is transparent for cut-eligibility (see enclosingKind) but, like
+// "other", never contributes to a message's full name.
 type rewriteFrame struct {
-	kind string // "message", "enum", or "other"
+	kind string // "message", "enum", "oneof", or "other"
 	name string
+}
+
+// enclosingKind walks up stack from the top, skipping transparent "oneof"
+// frames, and returns the kind of the nearest frame that actually scopes a
+// field statement. A field is cut-eligible only when this is "message":
+// oneof members belong to their enclosing message, but enum values must
+// never be mistaken for message fields.
+func enclosingKind(stack []rewriteFrame) string {
+	for i := len(stack) - 1; i >= 0; i-- {
+		if stack[i].kind != "oneof" {
+			return stack[i].kind
+		}
+	}
+	return ""
 }
 
 // Rewrite deletes every field statement named by cuts from protoText, a
 // .proto source file whose top-level package is pkg. It scans protoText
 // delimiter-by-delimiter ('{', '}', ';') rather than line-by-line, tracking
-// a message/enum brace stack (mirroring the descent Redpanda's
+// a message/enum/oneof brace stack (mirroring the descent Redpanda's
 // is_recursive_type performs over compiled descriptors) and drops a field
-// statement only when the innermost frame is a message and
+// statement only when its enclosing frame (a oneof is transparent and
+// resolves to the message it is declared in) is a message and
 // (fullMessageName, fieldName) is in cuts. Scanning by delimiter rather
 // than by line keeps the result correct regardless of how the source is
 // wrapped, including a whole message body written on a single line.
@@ -250,7 +282,7 @@ func Rewrite(protoText string, cuts []Cut, pkg string) (string, error) {
 		switch r {
 		case '{':
 			kind, name := "other", ""
-			if m := declRe.FindStringSubmatch(strings.TrimSpace(buf.String())); m != nil {
+			if m := declRe.FindStringSubmatch(strings.TrimSpace(stripLineComments(buf.String()))); m != nil {
 				kind, name = m[1], m[2]
 			}
 			flush()
@@ -265,7 +297,7 @@ func Rewrite(protoText string, cuts []Cut, pkg string) (string, error) {
 		case ';':
 			trimmed := strings.TrimSpace(buf.String())
 			cut := false
-			if len(stack) > 0 && stack[len(stack)-1].kind == "message" && strings.Contains(trimmed, "=") {
+			if enclosingKind(stack) == "message" && strings.Contains(trimmed, "=") {
 				lhs := strings.TrimSpace(strings.SplitN(trimmed, "=", 2)[0])
 				if fields := strings.Fields(lhs); len(fields) > 0 {
 					fname := fields[len(fields)-1]

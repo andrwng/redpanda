@@ -56,3 +56,37 @@ func TestRewriteRemovesCutFields(t *testing.T) {
 		t.Fatalf("cut field still present:\n%s", out)
 	}
 }
+
+// TestRewriteCutsFieldInsideOneof guards against treating a oneof frame as
+// opaque: a message-typed field declared inside a oneof must still be
+// cut-eligible, resolving its enclosing message through the oneof wrapper.
+func TestRewriteCutsFieldInsideOneof(t *testing.T) {
+	src := "syntax=\"proto3\";\npackage demo;\n" +
+		"message Node { oneof payload { string leaf = 1; Node child = 2; } }\n"
+	out, err := Rewrite(src, []Cut{{Message: "demo.Node", Field: "child"}}, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(out, "Node child") {
+		t.Fatalf("cut field inside oneof still present:\n%s", out)
+	}
+	if !contains(out, "string leaf") {
+		t.Fatalf("unrelated oneof field was removed:\n%s", out)
+	}
+}
+
+// TestRewriteHandlesCommentBeforeMessage guards against the declaration
+// regex being matched against a whole accumulated segment that still
+// contains a leading "// doc" comment line, which previously left the
+// enclosing message name empty and made every field inside it uncuttable.
+func TestRewriteHandlesCommentBeforeMessage(t *testing.T) {
+	src := "syntax=\"proto3\";\npackage demo;\n" +
+		"// doc comment\nmessage Node { string v = 1; Node next = 2; }\n"
+	out, err := Rewrite(src, []Cut{{Message: "demo.Node", Field: "next"}}, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(out, "Node next") {
+		t.Fatalf("cut field not removed when message preceded by comment:\n%s", out)
+	}
+}
