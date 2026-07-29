@@ -9,7 +9,9 @@
  */
 #include "datalake/coordinator/state.h"
 
+#include "base/vassert.h"
 #include "container/chunked_vector.h"
+#include "datalake/coordinator/translated_offset_range.h"
 
 #include <optional>
 #include <queue>
@@ -146,7 +148,40 @@ topics_state topics_state::copy() const {
     for (const auto& [id, state] : topic_to_state) {
         result.topic_to_state[id] = state.copy();
     }
+    result.pending_files_ = pending_files_;
+    result.pending_bytes_ = pending_bytes_;
     return result;
+}
+
+void topics_state::note_added(const translated_offset_range& r) {
+    pending_files_ += r.files.size() + r.dlq_files.size();
+    pending_bytes_ += estimated_memory_bytes(r);
+}
+
+void topics_state::note_removed(const translated_offset_range& r) {
+    const auto files = r.files.size() + r.dlq_files.size();
+    const auto bytes = estimated_memory_bytes(r);
+    dassert(
+      pending_files_ >= files && pending_bytes_ >= bytes,
+      "pending totals underflow: files {} bytes {} removing {}/{}",
+      pending_files_,
+      pending_bytes_,
+      files,
+      bytes);
+    pending_files_ -= files;
+    pending_bytes_ -= bytes;
+}
+
+void topics_state::recompute_pending() {
+    pending_files_ = 0;
+    pending_bytes_ = 0;
+    for (const auto& [_, t_state] : topic_to_state) {
+        for (const auto& [pid, p_state] : t_state.pid_to_pending_files) {
+            for (const auto& e : p_state.pending_entries) {
+                note_added(e.data);
+            }
+        }
+    }
 }
 
 bool topic_state::has_pending_entries() const {

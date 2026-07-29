@@ -105,6 +105,7 @@ add_files_update::apply(topics_state& state, model::offset applied_offset) {
 
     auto& partition_state = tp_state.pid_to_pending_files[pid];
     for (auto& e : entries) {
+        state.note_added(e);
         partition_state.pending_entries.emplace_back(
           pending_entry{
             .data = std::move(e),
@@ -195,6 +196,7 @@ mark_files_committed_update::apply(topics_state& state) {
     while (!files_state.pending_entries.empty()
            && files_state.pending_entries.front().data.last_offset
                 <= new_committed) {
+        state.note_removed(files_state.pending_entries.front().data);
         files_state.pending_entries.pop_front();
     }
     files_state.last_committed = new_committed;
@@ -272,6 +274,11 @@ topic_lifecycle_update::apply(topics_state& state) {
     t_state.revision = revision;
     t_state.lifecycle_state = new_state;
     if (new_state == topic_state::lifecycle_state_t::purged) {
+        for (const auto& [_, ps] : t_state.pid_to_pending_files) {
+            for (const auto& e : ps.pending_entries) {
+                state.note_removed(e.data);
+            }
+        }
         // release memory
         t_state.pid_to_pending_files = decltype(t_state.pid_to_pending_files){};
     }
@@ -309,10 +316,18 @@ reset_topic_state_update::apply(topics_state& state) {
     }
     auto& t_state = topic_it->second;
     if (reset_all_partitions) {
+        for (const auto& [_, ps] : t_state.pid_to_pending_files) {
+            for (const auto& e : ps.pending_entries) {
+                state.note_removed(e.data);
+            }
+        }
         t_state.pid_to_pending_files.clear();
     }
     for (auto& [pid, po] : partition_overrides) {
         auto& ps = t_state.pid_to_pending_files[pid];
+        for (const auto& e : ps.pending_entries) {
+            state.note_removed(e.data);
+        }
         ps.pending_entries.clear();
         if (po.last_committed.has_value()) {
             ps.last_committed = po.last_committed.value();

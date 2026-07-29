@@ -160,6 +160,8 @@ ss::future<raft::local_snapshot_applied> coordinator_stm::apply_local_snapshot(
     auto parser = iobuf_parser(std::move(snapshot_buf));
     auto snapshot = co_await serde::read_async<stm_snapshot>(parser);
     state_ = std::move(snapshot.topics);
+    // The totals are derived and not part of the serialized snapshot.
+    state_.recompute_pending();
     co_return raft::local_snapshot_applied::yes;
 }
 
@@ -179,6 +181,8 @@ ss::future<> coordinator_stm::apply_raft_snapshot(const iobuf& snapshot_buf) {
     auto parser = iobuf_parser(snapshot_buf.copy());
     auto snapshot = co_await serde::read_async<stm_snapshot>(parser);
     state_ = std::move(snapshot.topics);
+    // The totals are derived and not part of the serialized snapshot.
+    state_.recompute_pending();
 }
 
 ss::future<iobuf> coordinator_stm::take_raft_snapshot() {

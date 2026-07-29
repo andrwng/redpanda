@@ -168,6 +168,24 @@ struct topics_state
     // Returns the state for the given partition.
     std::optional<std::reference_wrapper<const partition_state>>
     partition_state(const model::topic_partition&) const;
+
+    size_t pending_files() const { return pending_files_; }
+    size_t pending_bytes() const { return pending_bytes_; }
+
+    // Adjust the running totals as entries enter/leave pending state. Called by
+    // the STM updates that add and remove entries.
+    void note_added(const translated_offset_range&);
+    void note_removed(const translated_offset_range&);
+
+    // Rebuild the totals from topic_to_state. Used after installing a snapshot,
+    // which deserializes topic_to_state but not the derived totals below.
+    void recompute_pending();
+
+    // Running totals of pending files and their estimated in-memory bytes
+    // across all topics. Derived from topic_to_state, so intentionally left out
+    // of serde_fields(): they are a cache, not replicated state.
+    size_t pending_files_ = 0;
+    size_t pending_bytes_ = 0;
 };
 
 } // namespace datalake::coordinator

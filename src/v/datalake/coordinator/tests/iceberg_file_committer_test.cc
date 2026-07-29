@@ -770,6 +770,9 @@ TEST_F(FileCommitterTest, TestChunkedCommitsAcrossPartitions) {
                   .added_pending_at = model::offset{control_offset++}});
         }
     }
+    // Entries were appended directly, so reconcile the running pending totals
+    // that mark_files_committed relies on when it removes committed entries.
+    state.recompute_pending();
 
     iceberg_file_committer chunked_committer(
       storage,
