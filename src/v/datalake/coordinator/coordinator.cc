@@ -583,19 +583,12 @@ bool coordinator::has_too_many_pending_files() {
       && now - *backpressured_as_of_ < commit_interval_()) {
         return true;
     }
-    const auto threshold = max_pending_files_();
-    size_t pending = 0;
-    for (const auto& [_, tp_state] : stm_->state().topic_to_state) {
-        for (const auto& [pid, p_state] : tp_state.pid_to_pending_files) {
-            for (const auto& entry : p_state.pending_entries) {
-                pending += entry.data.files.size()
-                           + entry.data.dlq_files.size();
-                if (pending >= threshold) {
-                    backpressured_as_of_ = now;
-                    return true;
-                }
-            }
-        }
+    const auto& state = stm_->state();
+    if (
+      state.pending_files() >= max_pending_files_()
+      || state.pending_bytes() >= max_pending_bytes_()) {
+        backpressured_as_of_ = now;
+        return true;
     }
     backpressured_as_of_ = std::nullopt;
     return false;

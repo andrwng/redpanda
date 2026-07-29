@@ -58,7 +58,8 @@ public:
       config::binding<std::chrono::milliseconds> commit_interval,
       config::binding<ss::sstring> default_partition_spec,
       config::binding<bool> disable_snapshot_expiry,
-      config::binding<size_t> max_pending_files)
+      config::binding<size_t> max_pending_files,
+      config::binding<size_t> max_pending_bytes)
       : stm_(std::move(stm))
       , topic_table_(topics)
       , type_resolver_(type_resolver)
@@ -70,6 +71,7 @@ public:
       , default_partition_spec_(std::move(default_partition_spec))
       , disable_snapshot_expiry_(std::move(disable_snapshot_expiry))
       , max_pending_files_(std::move(max_pending_files))
+      , max_pending_bytes_(std::move(max_pending_bytes))
       , probe_(stm_->raft()->ntp()) {}
 
     void start();
@@ -195,6 +197,9 @@ private:
     // Threshold of total pending files across this coordinator's topics above
     // which it rejects new files.
     config::binding<size_t> max_pending_files_;
+    // Soft limit on the estimated in-memory size of pending files across this
+    // coordinator's topics, above which it sheds load.
+    config::binding<size_t> max_pending_bytes_;
 
     ss::gate gate_;
     ss::abort_source as_;
