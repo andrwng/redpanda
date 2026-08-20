@@ -423,6 +423,9 @@ private:
 
     // This field is used in tests to disable background activit
     bool _test_only_disable_background_loop{false};
+    // Counts run_once invocations. The loop is documented as a tick every
+    // 5-20ms, so a test can assert that pacing holds.
+    size_t _test_only_tick_count{0};
 
     config::binding<size_t> _max_buffer_size;
     config::binding<size_t> _max_cardinality;

@@ -420,6 +420,7 @@ ss::future<typename Clock::time_point>
 write_request_scheduler<Clock>::run_once() {
     // This is a scheduler's "tick" which happens every
     // 5-20ms.
+    _test_only_tick_count++;
     auto this_shard = ss::this_shard_id();
     auto now = Clock::now();
 

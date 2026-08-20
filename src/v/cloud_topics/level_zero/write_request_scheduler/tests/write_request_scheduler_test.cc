@@ -109,6 +109,13 @@ struct write_request_balancer_accessor {
     static void disable_background_loop(write_request_scheduler<>* s) {
         s->_test_only_disable_background_loop = true;
     }
+    static size_t tick_count(write_request_scheduler<>* s) {
+        return s->_test_only_tick_count;
+    }
+    static scheduler_context<ss::lowres_clock>*
+    context(write_request_scheduler<>* s) {
+        return s->_context;
+    }
 };
 } // namespace l0
 
@@ -235,6 +242,71 @@ static auto make_random_batches(size_t num_batches, size_t batch_size) {
         batches.push_back(std::move(batch));
     }
     return batches;
+}
+
+/// Produce until `bytes` are pending on this shard, without waiting for the
+/// writes to be acknowledged. write_until_threshold cannot be used when the
+/// scheduler is blocked, because it waits for every write it makes.
+static ss::future<
+  std::vector<ss::future<std::expected<upload_meta, std::error_code>>>>
+produce_without_waiting(write_request_balancer_fixture& fix, size_t bytes) {
+    std::vector<ss::future<std::expected<upload_meta, std::error_code>>>
+      pending;
+    size_t produced = 0;
+    while (produced < bytes) {
+        auto buf = co_await model::test::make_random_batches();
+        chunked_vector<model::record_batch> batches;
+        for (auto& b : buf) {
+            produced += b.size_bytes();
+            batches.push_back(std::move(b));
+        }
+        pending.push_back(fix.pipeline.local().write_and_debounce(
+          test_ntp0,
+          min_epoch,
+          std::move(batches),
+          ss::lowres_clock::now() + 60s));
+    }
+    co_return std::move(pending);
+}
+
+TEST_F_CORO(write_request_balancer_fixture, no_spin_while_upload_is_blocked) {
+    ASSERT_TRUE_CORO(ss::this_smp_shard_count() > 1);
+    co_await start(false);
+
+    auto threshold = config::shard_local_cfg()
+                       .cloud_topics_produce_batching_size_threshold.value();
+
+    // Hold the group's mutex, which is what a shard must take before it can
+    // pull data and upload. Holding it stands in for any reason an upload
+    // cannot proceed, without depending on how a real one gets stuck.
+    auto* ctx = l0::write_request_balancer_accessor::context(
+      &scheduler.local());
+    std::unique_lock<std::mutex> upload_blocked(ctx->groups[0].mutex);
+
+    // The backlog is the other half of the condition: the scheduler's wait is
+    // short circuited by the shard's own pending bytes, so it only paces
+    // itself while it is below the batching threshold.
+    auto pending = co_await produce_without_waiting(*this, threshold * 2);
+    auto ticks_before = l0::write_request_balancer_accessor::tick_count(
+      &scheduler.local());
+    co_await ss::sleep(200ms);
+    auto ticks_after = l0::write_request_balancer_accessor::tick_count(
+      &scheduler.local());
+
+    upload_blocked.unlock();
+    co_await ss::when_all(pending.begin(), pending.end()).discard_result();
+
+    auto ticks = ticks_after - ticks_before;
+    vlog(test_log.info, "scheduler ticked {} times in 200ms", ticks);
+
+    // Tear down before asserting: a failing assertion returns from the
+    // coroutine, and the sharded services abort if they are destroyed while
+    // still started.
+    co_await stop();
+
+    // run_once is documented as a tick every 5-20ms, so at most 40 in 200ms.
+    // Allow an order of magnitude for scheduling noise.
+    ASSERT_LT_CORO(ticks, 400u);
 }
 
 TEST_F_CORO(write_request_balancer_fixture, time_deadline_test) {
